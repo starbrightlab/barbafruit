@@ -12,7 +12,7 @@
         android:layout_height="match_parent"
         android:background="@color/bg_dark">
 
-        <com.family.hippomuncher.GameSurfaceView
+        <com.family.barbafruit.GameSurfaceView
             android:id="@+id/gameSurface"
             android:layout_width="match_parent"
             android:layout_height="match_parent" />
@@ -35,7 +35,7 @@
             android:background="@android:color/transparent"
             android:contentDescription="Menu"
             android:src="@android:drawable/ic_menu_sort_by_size"
-            app:tint="@color/neon_cyan"
+            app:tint="@color/sky_cyan"
             android:elevation="6dp" />
 
         <LinearLayout
@@ -83,8 +83,8 @@
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
                     android:gravity="center"
-                    android:text="Hippo Muncher"
-                    android:textColor="@color/neon_cyan"
+                    android:text="🍒 Barbafruit"
+                    android:textColor="@color/truffula_pink"
                     android:textSize="24sp"
                     android:textStyle="bold"
                     android:paddingBottom="24dp" />
@@ -96,7 +96,7 @@
                     android:layout_height="wrap_content"
                     android:gravity="start|center_vertical"
                     android:text="@string/menu_play"
-                    android:textColor="@color/neon_lime"
+                    android:textColor="@color/leaf_lime"
                     android:textSize="18sp"
                     android:minHeight="64dp" />
 
@@ -107,7 +107,7 @@
                     android:layout_height="wrap_content"
                     android:gravity="start|center_vertical"
                     android:text="@string/menu_recalibrate"
-                    android:textColor="@color/neon_yellow"
+                    android:textColor="@color/truffula_yellow"
                     android:textSize="18sp"
                     android:minHeight="64dp" />
 
@@ -118,7 +118,7 @@
                     android:layout_height="wrap_content"
                     android:gravity="start|center_vertical"
                     android:text="@string/menu_reset_score"
-                    android:textColor="@color/neon_magenta"
+                    android:textColor="@color/truffula_orange"
                     android:textSize="18sp"
                     android:minHeight="64dp" />
 
@@ -129,7 +129,7 @@
                     android:layout_height="wrap_content"
                     android:gravity="start|center_vertical"
                     android:text="@string/menu_quit"
-                    android:textColor="@color/neon_cyan"
+                    android:textColor="@color/sky_cyan"
                     android:textSize="18sp"
                     android:minHeight="64dp" />
 
@@ -144,10 +144,56 @@
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
                     android:gravity="center"
+                    android:text="GAME MODE"
+                    android:textColor="@color/white"
+                    android:textSize="16sp"
+                    android:textStyle="bold"
+                    android:paddingBottom="12dp" />
+
+                <LinearLayout
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:orientation="horizontal">
+                    <Button android:id="@+id/btnModeFrenzy" android:layout_width="0dp" android:layout_height="56dp" android:layout_weight="1" android:layout_margin="2dp" android:text="🍒 FRENZY" android:textSize="12sp" />
+                    <Button android:id="@+id/btnModeClassic" android:layout_width="0dp" android:layout_height="56dp" android:layout_weight="1" android:layout_margin="2dp" android:text="🪨 CLASSIC" android:textSize="12sp" />
+                </LinearLayout>
+
+                <LinearLayout
+                    android:id="@+id/timerSection"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:orientation="vertical"
+                    android:paddingTop="20dp">
+
+                    <TextView
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:gravity="center"
+                        android:text="TIMER"
+                        android:textColor="@color/white"
+                        android:textSize="16sp"
+                        android:textStyle="bold"
+                        android:paddingBottom="12dp" />
+
+                    <LinearLayout
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:orientation="horizontal">
+                        <Button android:id="@+id/btnTime30" android:layout_width="0dp" android:layout_height="56dp" android:layout_weight="1" android:layout_margin="2dp" android:text="30 SEC" android:textSize="12sp" />
+                        <Button android:id="@+id/btnTime60" android:layout_width="0dp" android:layout_height="56dp" android:layout_weight="1" android:layout_margin="2dp" android:text="1 MIN" android:textSize="12sp" />
+                        <Button android:id="@+id/btnTime120" android:layout_width="0dp" android:layout_height="56dp" android:layout_weight="1" android:layout_margin="2dp" android:text="2 MIN" android:textSize="12sp" />
+                    </LinearLayout>
+                </LinearLayout>
+
+                <TextView
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:gravity="center"
                     android:text="DIFFICULTY"
                     android:textColor="@color/white"
                     android:textSize="16sp"
                     android:textStyle="bold"
+                    android:paddingTop="20dp"
                     android:paddingBottom="12dp" />
 
                 <LinearLayout

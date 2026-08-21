@@ -1,21 +1,38 @@
-# 🦛 HippoMuncher
+# 🍒 Barbafruit
 
-A family-friendly Android game for the **Meta Portal (1st Gen, Android 9 / API 28)** that uses the device's front-facing camera and on-device ML Kit face detection to let you control a hungry hippo with your head — no hands required!
+A family-friendly Android game for the **Meta Portal (1st Gen, Android 9 / API 28)** that uses the device's front-facing camera and on-device ML Kit face detection to let you control a hungry **Barbaloot bear** with your head — no hands required!
 
-Tilt your head left/right to move the hippo and catch falling fruits. Avoid bombs and muddy boots, or the game ends!
+Inspired by Dr. Seuss's *The Lorax*: Truffula fruits tumble down from the Truffula tree canopy, and the Barbaloot scampers back and forth (steered by your head!) to catch as many as it can.
+
+> Barbafruit is a fork of [HippoMuncher](https://github.com/compscirunner/HippoMuncher), rethemed and reworked for very young players.
 
 ---
 
 ## 📸 Gameplay
 
-- **Head tracking controls** — move your head to steer the hippo
-- **Catch fruits** (watermelon slices, bananas, stars) to score points
-- **Avoid bombs & muddy boots** — eating 3 ends the game
-- **Don't drop fruits** — letting 3 fall off screen also ends the game
+### 🍒 Fruit Frenzy (default mode)
+
+Designed for toddlers and young kids — **nothing bad can happen**:
+
+- Only Truffula fruits fall. No bombs, no boots, no rocks.
+- Missing a fruit costs nothing — no strikes, no fail state, no sad sounds.
+- Catch as many fruits as you can before the timer runs out (**30 seconds, 1 minute, or 2 minutes** — pick in the menu).
+- The round always ends in a confetti celebration: *"You caught 23 truffula fruits!"*
+
+### 🪨 Classic mode
+
+The original HippoMuncher rules, for older players:
+
+- Rocks and muddy boots fall alongside the fruit — eating 3 ends the game
+- Letting 3 fruits fall off screen also ends the game
+
+### Both modes
+
+- **Head tracking controls** — move your head to steer the Barbaloot
 - **3 difficulty levels** — Easy, Medium, Hard (adjust fall speed & spawn rate)
-- **High score tracking** per difficulty level
-- **Full sound effects** — background music, fruit/bomb sounds, game over sting
-- **Hamburger menu** — recalibrate, change difficulty, reset high score, quit
+- **High score tracking** per mode, timer length, and difficulty
+- **Full sound effects** — background music, catch sounds, celebration fanfare
+- **Hamburger menu** — game mode, timer, difficulty, recalibrate, reset high score
 
 ---
 
@@ -28,7 +45,7 @@ Tilt your head left/right to move the hippo and catch falling fruits. Avoid bomb
 3. Install via ADB:
 
 ```bash
-adb install -r HippoMuncher.apk
+adb install -r Barbafruit.apk
 ```
 
 4. Launch the app from your launcher (Nova Launcher recommended on Meta Portal)
@@ -49,8 +66,8 @@ adb install -r HippoMuncher.apk
 ### Clone the repo
 
 ```bash
-git clone https://github.com/YOUR_USERNAME/HippoMuncher.git
-cd HippoMuncher
+git clone https://github.com/starbrightlab/barbafruit.git
+cd barbafruit
 ```
 
 ### Configure local SDK path
@@ -94,7 +111,7 @@ adb install -r app/build/outputs/apk/release/app-release.apk
 ### Launch via ADB (useful on Meta Portal which has a locked launcher)
 
 ```bash
-adb shell am start -n com.family.hippomuncher/.MainActivity
+adb shell am start -n com.family.barbafruit/.MainActivity
 ```
 
 ---
@@ -103,7 +120,7 @@ adb shell am start -n com.family.hippomuncher/.MainActivity
 
 ```
 app/src/main/
-├── java/com/family/hippomuncher/
+├── java/com/family/barbafruit/
 │   ├── MainActivity.kt          # Activity, drawer menu, CameraX setup
 │   ├── GameSurfaceView.kt       # Game loop, rendering, physics (TextureView)
 │   ├── FaceTrackerAnalyzer.kt   # ML Kit face detection → normalized face coords
@@ -121,10 +138,10 @@ app/src/main/
 
 1. **CameraX** streams frames from the front camera to `FaceTrackerAnalyzer`
 2. **ML Kit Face Detection** locates the face and reports its normalized X/Y position and size
-3. A **calibration step** captures your neutral head position and scale to use as the origin, and adjusts for lateral offset so the hippo centers on your face
-4. The **game loop** (running at ~60 fps on a `TextureView`) lerps the hippo toward the tracked face X position
-5. Fruits and bombs spawn at random X positions and fall at speed determined by the selected **difficulty**
-6. **Game Over** triggers when 3 bombs/boots are eaten OR 3 fruits are dropped
+3. A **calibration step** captures your neutral head position and scale to use as the origin, and adjusts for lateral offset so the Barbaloot centers on your face
+4. The **game loop** (running at ~60 fps on a `TextureView`) lerps the Barbaloot toward the tracked face X position
+5. Truffula fruits spawn at random X positions and fall at speed determined by the selected **difficulty**
+6. In **Fruit Frenzy** the round ends when the timer runs out — always with a celebration. In **Classic**, the game ends when 3 rocks/boots are eaten OR 3 fruits are dropped
 
 ---
 

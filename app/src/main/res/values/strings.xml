@@ -1,10 +1,10 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <string name="app_name">Hippo Muncher</string>
+    <string name="app_name">Barbafruit</string>
     <string name="menu_play">▶  Play Game</string>
     <string name="menu_recalibrate">🎯  Recalibrate</string>
     <string name="menu_reset_score">🏆  Reset High Score</string>
-    <string name="menu_quit">🚪  Quit to Main Menu</string>
-    <string name="permission_rationale">Hippo Muncher needs the camera to see your head and move the hippo! No pictures are ever saved.</string>
+    <string name="menu_quit">🚪  Quit</string>
+    <string name="permission_rationale">Barbafruit needs the camera to see your head and move the Barbaloot! No pictures are ever saved.</string>
     <string name="grant_camera">Let\'s Go! Enable Camera</string>
 </resources>

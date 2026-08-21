@@ -1,4 +1,4 @@
-package com.family.hippomuncher
+package com.family.barbafruit
 
 import android.content.Context
 import android.graphics.*
@@ -21,18 +21,29 @@ import kotlin.random.Random
  *  - The game thread reads them each tick and lerps toward them.
  *  - State transitions requested from the UI thread (drawer buttons)
  *    set a volatile "requested state" the loop honors on its next tick.
+ *
+ * Game modes:
+ *  - FRUIT_FRENZY (default): nothing bad ever falls and nothing can end the
+ *    game early. Catch as many Truffula fruits as possible before the timer
+ *    runs out, then celebrate. Designed for very young players.
+ *  - CLASSIC: the original rules — rocks and boots fall too; eating 3 of
+ *    them, or dropping 3 fruits, ends the game.
  */
 class GameSurfaceView @JvmOverloads constructor(
     context: Context,
     attrs: AttributeSet? = null
 ) : TextureView(context, attrs), TextureView.SurfaceTextureListener {
 
-    // ======================== Game states & Difficulty ========================
-    enum class State { WAITING_FOR_CAMERA, CALIBRATING, COUNTDOWN, PLAYING, PAUSED, GAME_OVER }
+    // ======================== Game states, modes & difficulty ========================
+    enum class State { WAITING_FOR_CAMERA, CALIBRATING, COUNTDOWN, PLAYING, PAUSED, TIME_UP, GAME_OVER }
+    enum class GameMode { FRUIT_FRENZY, CLASSIC }
     enum class Difficulty { EASY, MEDIUM, HARD }
 
     @Volatile private var state = State.WAITING_FOR_CAMERA
+    @Volatile var gameMode = GameMode.FRUIT_FRENZY
     @Volatile var difficulty = Difficulty.MEDIUM
+    /** Round length for FRUIT_FRENZY, in seconds. Adjustable from the drawer. */
+    @Volatile var roundSeconds = 60
 
     // ==================== Face input (volatile bridge) ====================
     @Volatile private var faceX = 0.5f
@@ -83,7 +94,7 @@ class GameSurfaceView @JvmOverloads constructor(
         items.clear()
         particles.clear()
         score = 0
-        bombsEaten = 0
+        badItemsEaten = 0
         fruitsDropped = 0
         alignedSinceMs = 0L
         state = State.WAITING_FOR_CAMERA
@@ -91,10 +102,10 @@ class GameSurfaceView @JvmOverloads constructor(
 
     // ======================== Game entities ========================
     private var score = 0
-    private var bombsEaten = 0
+    private var badItemsEaten = 0
     private var fruitsDropped = 0
-    private var hippoX = 0.5f            // smoothed render position (0..1)
-    private var hippoDizzyUntil = 0L     // wobble animation end time
+    private var bearX = 0.5f             // smoothed render position (0..1)
+    private var bearDizzyUntil = 0L      // wobble animation end time (classic only)
     private var alignedSinceMs = 0L      // calibration hold timer
     private var calibrationAccumX = 0f
     private var calibrationCount = 0
@@ -103,11 +114,21 @@ class GameSurfaceView @JvmOverloads constructor(
     private var lastSpawnMs = 0L
     private var lastTickPlayed = -1
 
+    // Timed-round state (FRUIT_FRENZY). Captured at countdown start so
+    // drawer changes never affect a round already in progress. Elapsed time
+    // is accumulated from dt, so pausing freezes the clock too.
+    private var activeMode = GameMode.FRUIT_FRENZY
+    private var activeRoundSeconds = 60
+    private var playElapsedSec = 0f
+    private var lastTimerTick = -1
+    private var lastConfettiMs = 0L
+
     private data class Item(
         var x: Float, var y: Float,       // normalized
         val good: Boolean,
-        val kind: Int,                    // 0 melon, 1 banana, 2 star | 0 rock, 1 boot
-        val speed: Float                  // normalized units / second
+        val kind: Int,                    // fruit: 0 pink, 1 orange, 2 yellow | bad: 0 rock, 1 boot
+        val speed: Float,                 // normalized units / second
+        val sway: Float                   // phase offset for a gentle drift
     )
 
     private data class Particle(
@@ -124,12 +145,26 @@ class GameSurfaceView @JvmOverloads constructor(
         typeface = Typeface.create(Typeface.DEFAULT_BOLD, Typeface.BOLD)
         textAlign = Paint.Align.CENTER
     }
-    private val cCyan = Color.parseColor("#00F5FF")
-    private val cYellow = Color.parseColor("#FFEB3B")
-    private val cMagenta = Color.parseColor("#FF2BD6")
+
+    // Truffula palette — candy tufts over a Seuss twilight sky.
+    private val cPink = Color.parseColor("#FF8AC9")
+    private val cOrange = Color.parseColor("#FFA94D")
+    private val cYellow = Color.parseColor("#FFE066")
     private val cLime = Color.parseColor("#8BFF2B")
+    private val cCyan = Color.parseColor("#7FE3FF")
     private val cRed = Color.parseColor("#FF4D6A")
-    private val cBg = Color.parseColor("#14122B")
+    private val cSkyTop = Color.parseColor("#2C1E5E")
+    private val cSkyBottom = Color.parseColor("#7A4A8F")
+    private val cGrass = Color.parseColor("#2E7D5B")
+    private val cGrassLight = Color.parseColor("#3E9C6F")
+    private val cBearFur = Color.parseColor("#8A5A33")
+    private val cBearMuzzle = Color.parseColor("#D9A972")
+    private val cBearDark = Color.parseColor("#4A2E17")
+    private val fruitColors = intArrayOf(0, 0, 0).also {
+        it[0] = cPink; it[1] = cOrange; it[2] = cYellow
+    }
+    private var skyShader: LinearGradient? = null
+    private var skyShaderHeight = 0f
 
     // ======================== Thread plumbing ========================
     private var thread: GameThread? = null
@@ -157,7 +192,7 @@ class GameSurfaceView @JvmOverloads constructor(
     override fun onSurfaceTextureUpdated(surface: SurfaceTexture) {}
 
     override fun onTouchEvent(event: MotionEvent): Boolean {
-        if (state == State.GAME_OVER) {
+        if (state == State.GAME_OVER || state == State.TIME_UP) {
             if (event.action == MotionEvent.ACTION_DOWN) {
                 startCalibration()
                 return true
@@ -213,7 +248,8 @@ class GameSurfaceView @JvmOverloads constructor(
                 if (elapsed >= 3000) {
                     sound.go()     // plays fanfare + starts background music
                     items.clear(); particles.clear()
-                    score = 0; bombsEaten = 0; fruitsDropped = 0; lastSpawnMs = now
+                    score = 0; badItemsEaten = 0; fruitsDropped = 0; lastSpawnMs = now
+                    playElapsedSec = 0f; lastTimerTick = -1
                     state = State.PLAYING
                 }
             }
@@ -221,6 +257,7 @@ class GameSurfaceView @JvmOverloads constructor(
             State.PLAYING -> updatePlaying(dt, now)
 
             State.PAUSED -> { /* frozen — music already paused by pauseGame() */ }
+            State.TIME_UP -> updateCelebration(now)
             State.GAME_OVER -> { /* frozen */ }
         }
 
@@ -245,9 +282,12 @@ class GameSurfaceView @JvmOverloads constructor(
             calibrationCount++
 
             // Hold steady for 800 ms before launching the countdown —
-            // forgiving for a wiggly 6-year-old, but avoids false starts.
+            // forgiving for a wiggly little kid, but avoids false starts.
             if (now - alignedSinceMs >= 800) {
                 calibratedCenterX = if (calibrationCount > 0) calibrationAccumX / calibrationCount else 0.5f
+                // Lock in the round settings for this game.
+                activeMode = gameMode
+                activeRoundSeconds = roundSeconds
                 countdownStartMs = now
                 lastTickPlayed = -1
                 state = State.COUNTDOWN
@@ -266,10 +306,26 @@ class GameSurfaceView @JvmOverloads constructor(
     }
 
     private fun updatePlaying(dt: Float, now: Long) {
-        // ---- Hippo follows the face with a render-side lerp on top of the
+        // ---- Bear follows the face with a render-side lerp on top of the
         // analyzer's low-pass filter: silky even if camera frames drop. ----
         val targetX = (0.5f + (faceX - calibratedCenterX) * 2.2f).coerceIn(0.05f, 0.95f)
-        hippoX += (targetX - hippoX) * (LERP_SPEED * dt).coerceAtMost(1f)
+        bearX += (targetX - bearX) * (LERP_SPEED * dt).coerceAtMost(1f)
+
+        // ---- Round timer (FRUIT_FRENZY only). dt-based so pauses freeze it. ----
+        if (activeMode == GameMode.FRUIT_FRENZY) {
+            playElapsedSec += dt
+            val secondsLeft = (activeRoundSeconds - playElapsedSec.toInt()).coerceAtLeast(0)
+            if (secondsLeft != lastTimerTick && secondsLeft in 1..3) {
+                sound.tick(); lastTimerTick = secondsLeft
+            }
+            if (playElapsedSec >= activeRoundSeconds) {
+                sound.celebrate()          // happy fanfare, stops the music
+                state = State.TIME_UP
+                items.clear()
+                lastConfettiMs = 0L
+                return
+            }
+        }
 
         // ---- Difficulty settings ----
         val spawnInterval = when (difficulty) {
@@ -286,62 +342,78 @@ class GameSurfaceView @JvmOverloads constructor(
         // ---- Spawn items ----
         if (now - lastSpawnMs > spawnInterval) {
             lastSpawnMs = now
-            val good = Random.nextFloat() > 0.25f   // 75% good items
+            // Frenzy mode: every single thing that falls is catchable fruit.
+            val good = activeMode == GameMode.FRUIT_FRENZY || Random.nextFloat() > 0.25f
             items.add(
                 Item(
                     x = Random.nextFloat() * 0.86f + 0.07f,
                     y = -0.08f,
                     good = good,
                     kind = if (good) Random.nextInt(3) else Random.nextInt(2),
-                    speed = FALL_SPEED * speedMultiplier * (0.85f + Random.nextFloat() * 0.4f)
+                    speed = FALL_SPEED * speedMultiplier * (0.85f + Random.nextFloat() * 0.4f),
+                    sway = Random.nextFloat() * (2 * Math.PI).toFloat()
                 )
             )
         }
 
         // ---- Move items & detect collisions (pure AABB, normalized) ----
-        val hippoLeft = hippoX - HIPPO_HALF_W
-        val hippoRight = hippoX + HIPPO_HALF_W
-        val hippoTop = HIPPO_Y - HIPPO_HALF_H
+        val bearLeft = bearX - BEAR_HALF_W
+        val bearRight = bearX + BEAR_HALF_W
+        val bearTop = BEAR_Y - BEAR_HALF_H
 
         items.forEach { it.y += it.speed * dt }
 
         val eaten = items.filter { item ->
-            item.y + ITEM_HALF > hippoTop &&
-            item.y - ITEM_HALF < HIPPO_Y + HIPPO_HALF_H &&
-            item.x + ITEM_HALF > hippoLeft &&
-            item.x - ITEM_HALF < hippoRight
+            item.y + ITEM_HALF > bearTop &&
+            item.y - ITEM_HALF < BEAR_Y + BEAR_HALF_H &&
+            item.x + ITEM_HALF > bearLeft &&
+            item.x - ITEM_HALF < bearRight
         }
         eaten.forEach { item ->
             if (item.good) {
                 score++
                 if (score > highScore) { highScore = score; onNewHighScore?.invoke(highScore) }
                 sound.eatFruit()
+                burst(item.x, item.y, fruitColors[item.kind])
                 burst(item.x, item.y, cYellow)
-                burst(item.x, item.y, cLime)
             } else {
-                bombsEaten++
-                hippoDizzyUntil = now + 1200
+                badItemsEaten++
+                bearDizzyUntil = now + 1200
                 sound.eatBomb()
                 burst(item.x, item.y, Color.GRAY)
             }
         }
         items.removeAll(eaten.toSet())
 
-        // ---- Detect and count dropped fruits ----
+        // ---- Missed fruits fall off screen ----
         val fellOff = items.filter { it.y > 1.15f }
         fellOff.forEach { item ->
-            if (item.good) {
+            // In frenzy mode a missed fruit is a silent non-event: no penalty,
+            // no sad sound, nothing for a small player to get discouraged by.
+            if (item.good && activeMode == GameMode.CLASSIC) {
                 fruitsDropped++
                 sound.dropFruit()
             }
         }
         items.removeAll(fellOff.toSet())
 
-        // ---- Check Game Over condition ----
-        if (bombsEaten >= 3 || fruitsDropped >= 3) {
+        // ---- Classic-only fail condition ----
+        if (activeMode == GameMode.CLASSIC && (badItemsEaten >= 3 || fruitsDropped >= 3)) {
             sound.gameOver()   // stops music, plays game-over sting
             state = State.GAME_OVER
             items.clear()
+        }
+    }
+
+    /** Keep the party going on the celebration screen. */
+    private fun updateCelebration(now: Long) {
+        if (now - lastConfettiMs > 450) {
+            lastConfettiMs = now
+            burst(
+                Random.nextFloat() * 0.8f + 0.1f,
+                Random.nextFloat() * 0.4f + 0.05f,
+                fruitColors[Random.nextInt(3)]
+            )
         }
     }
 
@@ -365,8 +437,7 @@ class GameSurfaceView @JvmOverloads constructor(
     private fun render(c: Canvas) {
         val w = c.width.toFloat()
         val h = c.height.toFloat()
-        c.drawColor(cBg)
-        drawStarfield(c, w, h)
+        drawSky(c, w, h)
 
         when (state) {
             State.WAITING_FOR_CAMERA -> drawCenteredMessage(c, w, h, "Looking for you…", "Stand in front of the screen! 👀")
@@ -374,22 +445,77 @@ class GameSurfaceView @JvmOverloads constructor(
             State.COUNTDOWN -> { drawWorld(c, w, h); drawCountdown(c, w, h) }
             State.PLAYING -> { drawWorld(c, w, h); drawHud(c, w, h) }
             State.PAUSED -> { drawWorld(c, w, h); drawCenteredMessage(c, w, h, "Paused", "Close the menu to keep playing!") }
+            State.TIME_UP -> { drawWorld(c, w, h); drawCelebration(c, w, h) }
             State.GAME_OVER -> { drawWorld(c, w, h); drawGameOver(c, w, h) }
         }
     }
 
-    private fun drawStarfield(c: Canvas, w: Float, h: Float) {
-        // Deterministic twinkly background dots — cheap and cheerful.
+    // ---------------- Scenery ----------------
+    private fun drawSky(c: Canvas, w: Float, h: Float) {
+        if (skyShader == null || skyShaderHeight != h) {
+            skyShader = LinearGradient(0f, 0f, 0f, h, cSkyTop, cSkyBottom, Shader.TileMode.CLAMP)
+            skyShaderHeight = h
+        }
         paint.style = Paint.Style.FILL
+        paint.shader = skyShader
+        c.drawRect(0f, 0f, w, h, paint)
+        paint.shader = null
+
+        // Deterministic twinkly dots — cheap and cheerful.
         val t = System.currentTimeMillis() / 600.0
-        for (i in 0 until 40) {
+        for (i in 0 until 30) {
             val sx = ((i * 97) % 100) / 100f * w
-            val sy = ((i * 53) % 100) / 100f * h
+            val sy = ((i * 53) % 100) / 100f * h * 0.7f
             val twinkle = (sin(t + i) * 0.5 + 0.5).toFloat()
-            paint.color = Color.argb((40 + 90 * twinkle).toInt(), 255, 255, 255)
-            c.drawCircle(sx, sy, 3f + 2f * twinkle, paint)
+            paint.color = Color.argb((30 + 70 * twinkle).toInt(), 255, 255, 255)
+            c.drawCircle(sx, sy, 2.5f + 2f * twinkle, paint)
         }
     }
+
+    private fun drawGround(c: Canvas, w: Float, h: Float) {
+        paint.style = Paint.Style.FILL
+        paint.color = cGrass
+        c.drawRect(0f, h * 0.94f, w, h, paint)
+        // Rolling hilltop bumps along the grass line.
+        paint.color = cGrassLight
+        for (i in 0 until 9) {
+            val bx = (i / 8f) * w
+            c.drawCircle(bx, h * 0.955f, h * 0.025f, paint)
+        }
+    }
+
+    /**
+     * The underside of the Truffula canopy along the top edge — tufty
+     * pom-poms on striped trunks that the fruit appears to drop out of.
+     */
+    private fun drawTruffulaCanopy(c: Canvas, w: Float, h: Float) {
+        val tufts = floatArrayOf(0.08f, 0.30f, 0.52f, 0.74f, 0.94f)
+        paint.style = Paint.Style.FILL
+        for (i in tufts.indices) {
+            val cx = tufts[i] * w
+            val color = fruitColors[i % 3]
+            val r = h * 0.075f
+
+            // Striped trunk poking down from offscreen.
+            val trunkW = w * 0.012f
+            val trunkBottom = h * 0.035f
+            paint.color = Color.parseColor("#F5E9C8")
+            c.drawRect(cx - trunkW, -4f, cx + trunkW, trunkBottom, paint)
+            paint.color = Color.parseColor("#3A2A20")
+            c.drawRect(cx - trunkW, trunkBottom * 0.35f, cx + trunkW, trunkBottom * 0.6f, paint)
+
+            // Fluffy tuft: one fat circle plus overlapping puffs.
+            paint.color = color
+            c.drawCircle(cx, trunkBottom + r * 0.55f, r, paint)
+            c.drawCircle(cx - r * 0.75f, trunkBottom + r * 0.25f, r * 0.65f, paint)
+            c.drawCircle(cx + r * 0.75f, trunkBottom + r * 0.25f, r * 0.65f, paint)
+            paint.color = withAlpha(Color.WHITE, 50)
+            c.drawCircle(cx - r * 0.3f, trunkBottom + r * 0.3f, r * 0.45f, paint)
+        }
+    }
+
+    private fun withAlpha(color: Int, alpha: Int): Int =
+        Color.argb(alpha, Color.red(color), Color.green(color), Color.blue(color))
 
     // ---------------- Calibration screen ----------------
     private fun drawCalibration(c: Canvas, w: Float, h: Float) {
@@ -399,7 +525,7 @@ class GameSurfaceView @JvmOverloads constructor(
         val radius = h * 0.30f
         val t = System.currentTimeMillis()
 
-        // Big neon target circle: red/yellow → flashing green when aligned.
+        // Big target circle: red/yellow → flashing green when aligned.
         paint.style = Paint.Style.STROKE
         paint.strokeWidth = 14f
         paint.color = when {
@@ -448,15 +574,17 @@ class GameSurfaceView @JvmOverloads constructor(
         val elapsed = System.currentTimeMillis() - countdownStartMs
         val n = (3 - elapsed / 1000).coerceAtLeast(1)
         val phase = (elapsed % 1000) / 1000f
-        textPaint.color = cMagenta
+        textPaint.color = cPink
         textPaint.textSize = h * (0.35f - 0.1f * phase)   // shrinking pop
         c.drawText("$n", w / 2f, h / 2f + textPaint.textSize / 3f, textPaint)
     }
 
     // ---------------- Game world ----------------
     private fun drawWorld(c: Canvas, w: Float, h: Float) {
+        drawGround(c, w, h)
         items.forEach { drawItem(c, w, h, it) }
-        drawHippo(c, w, h)
+        drawTruffulaCanopy(c, w, h)
+        drawBear(c, w, h)
         paint.style = Paint.Style.FILL
         particles.forEach { p ->
             paint.color = p.color
@@ -471,22 +599,19 @@ class GameSurfaceView @JvmOverloads constructor(
         val y = item.y * h
         val r = ITEM_HALF * h
         paint.style = Paint.Style.FILL
-        if (item.good) when (item.kind) {
-            0 -> { // watermelon slice
-                paint.color = cLime
-                c.drawArc(x - r, y - r, x + r, y + r, 0f, 180f, true, paint)
-                paint.color = Color.parseColor("#FF5577")
-                c.drawArc(x - r * .8f, y - r * .8f, x + r * .8f, y + r * .8f, 0f, 180f, true, paint)
-            }
-            1 -> { // banana
-                paint.color = cYellow
-                paint.style = Paint.Style.STROKE
-                paint.strokeWidth = r * 0.55f
-                paint.strokeCap = Paint.Cap.ROUND
-                c.drawArc(x - r, y - r, x + r, y + r, 30f, 120f, false, paint)
-                paint.strokeCap = Paint.Cap.BUTT
-            }
-            else -> drawStar(c, x, y, r, cCyan)
+        if (item.good) {
+            // Truffula fruit: a fluffy pom-pom with a tiny stem.
+            val color = fruitColors[item.kind]
+            val bob = sin(item.sway + item.y * 9f) * r * 0.08f
+            paint.color = Color.parseColor("#F5E9C8")
+            c.drawRect(x - r * 0.06f, y - r * 1.1f, x + r * 0.06f, y - r * 0.4f, paint)
+            paint.color = color
+            c.drawCircle(x + bob, y, r * 0.85f, paint)
+            c.drawCircle(x - r * 0.5f + bob, y - r * 0.25f, r * 0.5f, paint)
+            c.drawCircle(x + r * 0.5f + bob, y - r * 0.25f, r * 0.5f, paint)
+            c.drawCircle(x + bob, y - r * 0.45f, r * 0.55f, paint)
+            paint.color = withAlpha(Color.WHITE, 70)
+            c.drawCircle(x - r * 0.25f + bob, y - r * 0.3f, r * 0.3f, paint)
         } else when (item.kind) {
             0 -> { // rock
                 paint.color = Color.GRAY
@@ -502,46 +627,37 @@ class GameSurfaceView @JvmOverloads constructor(
         }
     }
 
-    private fun drawStar(c: Canvas, x: Float, y: Float, r: Float, color: Int) {
-        paint.style = Paint.Style.FILL
-        paint.color = color
-        val path = Path()
-        for (i in 0 until 10) {
-            val rad = if (i % 2 == 0) r else r * 0.45f
-            val a = Math.PI / 5 * i - Math.PI / 2
-            val px = x + rad * kotlin.math.cos(a).toFloat()
-            val py = y + rad * sin(a).toFloat()
-            if (i == 0) path.moveTo(px, py) else path.lineTo(px, py)
-        }
-        path.close()
-        c.drawPath(path, paint)
-    }
-
-    private fun drawHippo(c: Canvas, w: Float, h: Float) {
+    private fun drawBear(c: Canvas, w: Float, h: Float) {
         val now = System.currentTimeMillis()
-        val dizzy = now < hippoDizzyUntil
+        val dizzy = now < bearDizzyUntil
         val wobble = if (dizzy) sin(now / 40.0).toFloat() * 14f else 0f
 
-        val cx = hippoX * w + wobble
-        val cy = HIPPO_Y * h
-        val rw = HIPPO_HALF_W * w
-        val rh = HIPPO_HALF_H * h
+        val cx = bearX * w + wobble
+        val cy = BEAR_Y * h
+        val rw = BEAR_HALF_W * w
+        val rh = BEAR_HALF_H * h
 
         paint.style = Paint.Style.FILL
-        // Body/head — friendly purple hippo
-        paint.color = Color.parseColor("#9C6BFF")
-        c.drawRoundRect(RectF(cx - rw, cy - rh, cx + rw, cy + rh), rh * .7f, rh * .7f, paint)
-        // Snout
-        paint.color = Color.parseColor("#B98CFF")
-        c.drawRoundRect(RectF(cx - rw * .8f, cy - rh * .1f, cx + rw * .8f, cy + rh), rh * .6f, rh * .6f, paint)
-        // Ears
-        paint.color = Color.parseColor("#9C6BFF")
-        c.drawCircle(cx - rw * .7f, cy - rh * 1.05f, rh * .35f, paint)
-        c.drawCircle(cx + rw * .7f, cy - rh * 1.05f, rh * .35f, paint)
+        // Round bear ears
+        paint.color = cBearFur
+        c.drawCircle(cx - rw * .65f, cy - rh * 1.0f, rh * .4f, paint)
+        c.drawCircle(cx + rw * .65f, cy - rh * 1.0f, rh * .4f, paint)
+        paint.color = cBearMuzzle
+        c.drawCircle(cx - rw * .65f, cy - rh * 1.0f, rh * .2f, paint)
+        c.drawCircle(cx + rw * .65f, cy - rh * 1.0f, rh * .2f, paint)
+        // Head/body — friendly brown Barbaloot
+        paint.color = cBearFur
+        c.drawRoundRect(RectF(cx - rw, cy - rh, cx + rw, cy + rh), rh * .8f, rh * .8f, paint)
+        // Fuzzy tummy/muzzle
+        paint.color = cBearMuzzle
+        c.drawRoundRect(RectF(cx - rw * .75f, cy - rh * .15f, cx + rw * .75f, cy + rh), rh * .6f, rh * .6f, paint)
         // Open mouth (the "catcher")
-        paint.color = Color.parseColor("#3A2353")
+        paint.color = cBearDark
         c.drawArc(cx - rw * .55f, cy, cx + rw * .55f, cy + rh * .95f, 0f, 180f, true, paint)
-        // Eyes — swirly when dizzy
+        // Little nose
+        paint.color = cBearDark
+        c.drawCircle(cx, cy - rh * .05f, rh * .11f, paint)
+        // Eyes — swirly when dizzy (classic mode only)
         if (dizzy) {
             paint.style = Paint.Style.STROKE
             paint.strokeWidth = 6f
@@ -557,61 +673,71 @@ class GameSurfaceView @JvmOverloads constructor(
             c.drawCircle(cx - rw * .35f, cy - rh * .42f, rh * .12f, paint)
             c.drawCircle(cx + rw * .35f, cy - rh * .42f, rh * .12f, paint)
         }
-        // Nostrils
-        paint.color = Color.parseColor("#5E3DA8")
-        c.drawCircle(cx - rw * .25f, cy + rh * .12f, rh * .09f, paint)
-        c.drawCircle(cx + rw * .25f, cy + rh * .12f, rh * .09f, paint)
     }
 
     private fun drawHud(c: Canvas, w: Float, h: Float) {
-        // Save current text alignment
         val originalAlign = textPaint.textAlign
 
         // Big bubbly score, top-center with outline for pop.
         textPaint.textSize = h * 0.12f
         textPaint.style = Paint.Style.STROKE
         textPaint.strokeWidth = 10f
-        textPaint.color = cBg
+        textPaint.color = cSkyTop
         textPaint.textAlign = Paint.Align.CENTER
-        c.drawText("⭐ $score", w / 2f, h * 0.14f, textPaint)
+        c.drawText("🍒 $score", w / 2f, h * 0.16f, textPaint)
         textPaint.style = Paint.Style.FILL
         textPaint.color = cYellow
-        c.drawText("⭐ $score", w / 2f, h * 0.14f, textPaint)
+        c.drawText("🍒 $score", w / 2f, h * 0.16f, textPaint)
 
-        // Best Score
-        textPaint.textSize = h * 0.045f
-        textPaint.color = cCyan
-        c.drawText("Best: $highScore", w / 2f, h * 0.20f, textPaint)
+        if (activeMode == GameMode.FRUIT_FRENZY) {
+            // Countdown clock under the score — turns red for the final 10 s.
+            val secondsLeft = (activeRoundSeconds - playElapsedSec.toInt()).coerceAtLeast(0)
+            textPaint.textSize = h * 0.07f
+            textPaint.color = if (secondsLeft <= 10) cRed else Color.WHITE
+            c.drawText(formatTime(secondsLeft), w / 2f, h * 0.25f, textPaint)
 
-        // Current Difficulty
-        textPaint.textSize = h * 0.035f
-        textPaint.color = Color.parseColor("#88FFFFFF")
-        c.drawText("Difficulty: $difficulty", w / 2f, h * 0.25f, textPaint)
+            textPaint.textSize = h * 0.035f
+            textPaint.color = Color.parseColor("#88FFFFFF")
+            c.drawText("Best: $highScore", w / 2f, h * 0.30f, textPaint)
+        } else {
+            textPaint.textSize = h * 0.045f
+            textPaint.color = cCyan
+            c.drawText("Best: $highScore", w / 2f, h * 0.22f, textPaint)
 
-        // Draw Bombs Eaten indicator (top-left)
-        textPaint.textSize = h * 0.04f
-        textPaint.textAlign = Paint.Align.LEFT
-        textPaint.color = Color.WHITE
-        c.drawText("Bombs: ", w * 0.05f, h * 0.08f, textPaint)
-        val bombText = (1..3).joinToString(" ") { i ->
-            if (i <= bombsEaten) "💥" else "⚪"
+            textPaint.textSize = h * 0.035f
+            textPaint.color = Color.parseColor("#88FFFFFF")
+            c.drawText("Difficulty: $difficulty", w / 2f, h * 0.27f, textPaint)
+
+            // Bad-items indicator (top-left)
+            textPaint.textSize = h * 0.04f
+            textPaint.textAlign = Paint.Align.LEFT
+            textPaint.color = Color.WHITE
+            c.drawText("Rocks: ", w * 0.05f, h * 0.08f, textPaint)
+            val badText = (1..3).joinToString(" ") { i ->
+                if (i <= badItemsEaten) "💥" else "⚪"
+            }
+            textPaint.color = cRed
+            c.drawText(badText, w * 0.05f + textPaint.measureText("Rocks: "), h * 0.08f, textPaint)
+
+            // Dropped-fruit indicator (top-right)
+            textPaint.textAlign = Paint.Align.RIGHT
+            textPaint.color = Color.WHITE
+            val fruitsText = (1..3).joinToString(" ") { i ->
+                if (i <= fruitsDropped) "❌" else "🍒"
+            }
+            val label = "Dropped: "
+            c.drawText(fruitsText, w * 0.95f, h * 0.08f, textPaint)
+            textPaint.color = cLime
+            c.drawText(label, w * 0.95f - textPaint.measureText(fruitsText) - 10f, h * 0.08f, textPaint)
         }
-        textPaint.color = cRed
-        c.drawText(bombText, w * 0.05f + textPaint.measureText("Bombs: "), h * 0.08f, textPaint)
 
-        // Draw Fruits Dropped indicator (top-right)
-        textPaint.textAlign = Paint.Align.RIGHT
-        textPaint.color = Color.WHITE
-        val fruitsText = (1..3).joinToString(" ") { i ->
-            if (i <= fruitsDropped) "❌" else "🍉"
-        }
-        val label = "Dropped: "
-        c.drawText(fruitsText, w * 0.95f, h * 0.08f, textPaint)
-        textPaint.color = cLime
-        c.drawText(label, w * 0.95f - textPaint.measureText(fruitsText) - 10f, h * 0.08f, textPaint)
-
-        // Restore original text alignment
         textPaint.textAlign = originalAlign
+    }
+
+    private fun formatTime(totalSeconds: Int): String {
+        val m = totalSeconds / 60
+        val s = totalSeconds % 60
+        return "%d:%02d".format(m, s)
     }
 
     private fun drawCenteredMessage(c: Canvas, w: Float, h: Float, big: String, small: String) {
@@ -623,9 +749,53 @@ class GameSurfaceView @JvmOverloads constructor(
         c.drawText(small, w / 2f, h / 2f + h * 0.08f, textPaint)
     }
 
+    /** Happy end-of-round screen for FRUIT_FRENZY — all cheers, no failure. */
+    private fun drawCelebration(c: Canvas, w: Float, h: Float) {
+        // Gentle dim so the text pops but the confetti still shows.
+        paint.color = Color.parseColor("#882C1E5E")
+        paint.style = Paint.Style.FILL
+        c.drawRect(0f, 0f, w, h, paint)
+
+        val cx = w / 2f
+        val cy = h / 2f
+        val bounce = sin(System.currentTimeMillis() / 250.0).toFloat() * h * 0.01f
+
+        textPaint.style = Paint.Style.FILL
+        textPaint.textAlign = Paint.Align.CENTER
+        textPaint.color = cYellow
+        textPaint.textSize = h * 0.11f
+        c.drawText("🎉 TIME'S UP! 🎉", cx, cy - h * 0.16f + bounce, textPaint)
+
+        textPaint.color = Color.WHITE
+        textPaint.textSize = h * 0.065f
+        val fruitWord = if (score == 1) "fruit" else "fruits"
+        c.drawText("You caught $score truffula $fruitWord!", cx, cy - h * 0.04f, textPaint)
+
+        textPaint.textSize = h * 0.05f
+        textPaint.color = cPink
+        val cheer = when {
+            score >= highScore && score > 0 -> "⭐ NEW BEST! Amazing! ⭐"
+            score >= activeRoundSeconds / 2 -> "Wow, what a hungry Barbaloot!"
+            else -> "Great catching!"
+        }
+        c.drawText(cheer, cx, cy + h * 0.05f, textPaint)
+
+        textPaint.textSize = h * 0.045f
+        textPaint.color = cCyan
+        c.drawText("Best: $highScore", cx, cy + h * 0.12f, textPaint)
+
+        // Tap to restart, pulsing
+        textPaint.textSize = h * 0.05f
+        textPaint.color = cLime
+        val alpha = (180 + 75 * sin(System.currentTimeMillis() / 200.0)).toInt().coerceIn(0, 255)
+        textPaint.alpha = alpha
+        c.drawText("Tap the screen to play again! 🍒", cx, cy + h * 0.21f, textPaint)
+        textPaint.alpha = 255
+    }
+
     private fun drawGameOver(c: Canvas, w: Float, h: Float) {
         // Semi-transparent overlay to dim the world
-        paint.color = Color.parseColor("#D914122B")
+        paint.color = Color.parseColor("#D92C1E5E")
         paint.style = Paint.Style.FILL
         c.drawRect(0f, 0f, w, h, paint)
 
@@ -643,9 +813,9 @@ class GameSurfaceView @JvmOverloads constructor(
         textPaint.color = Color.WHITE
         textPaint.textSize = h * 0.045f
         val reason = when {
-            bombsEaten >= 3 && fruitsDropped >= 3 -> "Ate 3 bombs & dropped 3 fruits!"
-            bombsEaten >= 3 -> "Ouch! You ate 3 bombs! 💣"
-            else -> "Oops! You dropped 3 fruits! 🍉"
+            badItemsEaten >= 3 && fruitsDropped >= 3 -> "Ate 3 rocks & dropped 3 fruits!"
+            badItemsEaten >= 3 -> "Ouch! You ate 3 rocks! 🪨"
+            else -> "Oops! You dropped 3 fruits! 🍒"
         }
         c.drawText(reason, cx, cy - h * 0.07f, textPaint)
 
@@ -674,15 +844,14 @@ class GameSurfaceView @JvmOverloads constructor(
         const val MIN_FACE_SIZE = 0.10f    // too far if smaller
         const val MAX_FACE_SIZE = 0.45f    // too close if bigger
 
-        // Hippo
-        const val HIPPO_Y = 0.86f          // bottom 20% of the screen
-        const val HIPPO_HALF_W = 0.07f
-        const val HIPPO_HALF_H = 0.09f
+        // Barbaloot bear
+        const val BEAR_Y = 0.86f           // bottom 20% of the screen
+        const val BEAR_HALF_W = 0.07f
+        const val BEAR_HALF_H = 0.09f
         const val LERP_SPEED = 9f          // render-side smoothing factor
 
         // Items — gentle, child-friendly pace
         const val ITEM_HALF = 0.045f
         const val FALL_SPEED = 0.18f       // screen heights / second
-        const val SPAWN_INTERVAL_MS = 1100L
     }
 }

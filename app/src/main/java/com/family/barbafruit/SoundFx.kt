@@ -1,4 +1,4 @@
-package com.family.hippomuncher
+package com.family.barbafruit
 
 import android.content.Context
 import android.media.AudioAttributes
@@ -10,7 +10,7 @@ import android.os.Handler
 import android.os.Looper
 
 /**
- * Sound system for Hippo Muncher.
+ * Sound system for Barbafruit.
  *
  * - Short one-shot effects use [SoundPool] for near-zero latency.
  * - Looping background music uses [MediaPlayer], which MUST be controlled
@@ -78,6 +78,16 @@ class SoundFx(context: Context) {
     fun gameOver() {
         stopMusic()
         pool.play(idGameOver, 1f, 1f, 2, 0, 1f)
+    }
+
+    /**
+     * Happy end-of-round fanfare for timed mode — reuses the upbeat GO
+     * sound (never the game-over sting) and stops the music without
+     * starting it again.
+     */
+    fun celebrate() {
+        stopMusic()
+        pool.play(idGo, 1f, 1f, 2, 0, 1f)
     }
 
     /** Calibration countdown tick: 3… 2… 1… */

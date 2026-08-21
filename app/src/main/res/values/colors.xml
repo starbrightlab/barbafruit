@@ -1,11 +1,13 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <color name="bg_dark">#FF14122B</color>
-    <color name="bg_drawer">#FF1E1B3C</color>
-    <color name="neon_cyan">#FF00F5FF</color>
-    <color name="neon_yellow">#FFFFEB3B</color>
-    <color name="neon_magenta">#FFFF2BD6</color>
-    <color name="neon_lime">#FF8BFF2B</color>
-    <color name="neon_red">#FFFF4D6A</color>
+    <!-- Truffula palette: candy tufts over a Seuss twilight sky -->
+    <color name="bg_dark">#FF2C1E5E</color>
+    <color name="bg_drawer">#FF3A2A72</color>
+    <color name="truffula_pink">#FFFF8AC9</color>
+    <color name="truffula_orange">#FFFFA94D</color>
+    <color name="truffula_yellow">#FFFFE066</color>
+    <color name="leaf_lime">#FF8BFF2B</color>
+    <color name="sky_cyan">#FF7FE3FF</color>
+    <color name="berry_red">#FFFF4D6A</color>
     <color name="white">#FFFFFFFF</color>
 </resources>

@@ -2,17 +2,17 @@ apply plugin: 'com.android.application'
 apply plugin: 'org.jetbrains.kotlin.android'
 
 android {
-    namespace 'com.family.hippomuncher'
+    namespace 'com.family.barbafruit'
     // compileSdk 33 is required by current AndroidX libs; min/target stay locked at 28
     // so no API > 28 behavior is ever requested on the Portal's Android 9 OS.
     compileSdk 33
 
     defaultConfig {
-        applicationId "com.family.hippomuncher"
+        applicationId "com.family.barbafruit"
         minSdk 28
         targetSdk 28
-        versionCode 1
-        versionName "1.0"
+        versionCode 2
+        versionName "2.0"
     }
 
     signingConfigs {

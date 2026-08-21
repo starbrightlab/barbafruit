@@ -1,4 +1,4 @@
-package com.family.hippomuncher
+package com.family.barbafruit
 
 import android.annotation.SuppressLint
 import androidx.camera.core.ImageAnalysis
@@ -30,7 +30,7 @@ data class FaceFrame(
  * Tuned for 1st-gen Portal (Snapdragon 624-class SoC):
  *  - PERFORMANCE_MODE_FAST, no landmarks, no classification
  *  - enableTracking() locks onto one face ID so a sibling walking by
- *    in the background doesn't steal the hippo
+ *    in the background doesn't steal the bear
  *  - KEEP_ONLY_LATEST backpressure (set on the ImageAnalysis use case)
  *    means we never queue stale frames when the detector falls behind
  */
@@ -114,7 +114,7 @@ class FaceTrackerAnalyzer(
                 } else {
                     // Brief dropouts are normal on this hardware; only report
                     // "no face" after a few consecutive misses, and keep the
-                    // last smoothed position so the hippo doesn't snap away.
+                    // last smoothed position so the bear doesn't snap away.
                     framesWithoutFace++
                     if (framesWithoutFace > MISS_TOLERANCE) {
                         lockedTrackingId = null
