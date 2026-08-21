@@ -90,6 +90,9 @@ class SoundFx(context: Context) {
         pool.play(idGo, 1f, 1f, 2, 0, 1f)
     }
 
+    /** Short chirpy cheer for mid-round milestones — the GO fanfare pitched up. */
+    fun cheer() = pool.play(idGo, 1f, 1f, 1, 0, 1.6f)
+
     /** Calibration countdown tick: 3… 2… 1… */
     fun tick() = tone?.startTone(ToneGenerator.TONE_PROP_BEEP2, 100)
 

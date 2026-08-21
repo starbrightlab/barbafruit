@@ -42,7 +42,10 @@ class GameSurfaceView @JvmOverloads constructor(
     @Volatile private var state = State.WAITING_FOR_CAMERA
     @Volatile var gameMode = GameMode.FRUIT_FRENZY
     @Volatile var difficulty = Difficulty.MEDIUM
-    /** Round length for FRUIT_FRENZY, in seconds. Adjustable from the drawer. */
+    /**
+     * Round length for FRUIT_FRENZY, in seconds. Adjustable from the drawer.
+     * 0 means endless — no timer, no ending, play until a grown-up quits.
+     */
     @Volatile var roundSeconds = 60
 
     // ==================== Face input (volatile bridge) ====================
@@ -122,6 +125,11 @@ class GameSurfaceView @JvmOverloads constructor(
     private var playElapsedSec = 0f
     private var lastTimerTick = -1
     private var lastConfettiMs = 0L
+
+    // Milestone cheer (FRUIT_FRENZY): every 10th fruit the Lorax pops up.
+    private var milestoneUntilMs = 0L
+    private var milestoneText = ""
+    private var milestoneCheer = ""
 
     private data class Item(
         var x: Float, var y: Float,       // normalized
@@ -249,7 +257,7 @@ class GameSurfaceView @JvmOverloads constructor(
                     sound.go()     // plays fanfare + starts background music
                     items.clear(); particles.clear()
                     score = 0; badItemsEaten = 0; fruitsDropped = 0; lastSpawnMs = now
-                    playElapsedSec = 0f; lastTimerTick = -1
+                    playElapsedSec = 0f; lastTimerTick = -1; milestoneUntilMs = 0L
                     state = State.PLAYING
                 }
             }
@@ -311,8 +319,9 @@ class GameSurfaceView @JvmOverloads constructor(
         val targetX = (0.5f + (faceX - calibratedCenterX) * 2.2f).coerceIn(0.05f, 0.95f)
         bearX += (targetX - bearX) * (LERP_SPEED * dt).coerceAtMost(1f)
 
-        // ---- Round timer (FRUIT_FRENZY only). dt-based so pauses freeze it. ----
-        if (activeMode == GameMode.FRUIT_FRENZY) {
+        // ---- Round timer (FRUIT_FRENZY only, skipped in endless). dt-based
+        // so pauses freeze it. ----
+        if (activeMode == GameMode.FRUIT_FRENZY && activeRoundSeconds > 0) {
             playElapsedSec += dt
             val secondsLeft = (activeRoundSeconds - playElapsedSec.toInt()).coerceAtLeast(0)
             if (secondsLeft != lastTimerTick && secondsLeft in 1..3) {
@@ -357,8 +366,12 @@ class GameSurfaceView @JvmOverloads constructor(
         }
 
         // ---- Move items & detect collisions (pure AABB, normalized) ----
-        val bearLeft = bearX - BEAR_HALF_W
-        val bearRight = bearX + BEAR_HALF_W
+        // On EASY the catch box is wider than the bear looks, so a
+        // near-miss still counts — the littlest players barely move.
+        val catchHalfW =
+            if (difficulty == Difficulty.EASY) BEAR_HALF_W * EASY_CATCH_BONUS else BEAR_HALF_W
+        val bearLeft = bearX - catchHalfW
+        val bearRight = bearX + catchHalfW
         val bearTop = BEAR_Y - BEAR_HALF_H
 
         items.forEach { it.y += it.speed * dt }
@@ -376,6 +389,9 @@ class GameSurfaceView @JvmOverloads constructor(
                 sound.eatFruit()
                 burst(item.x, item.y, fruitColors[item.kind])
                 burst(item.x, item.y, cYellow)
+                if (activeMode == GameMode.FRUIT_FRENZY && score % MILESTONE_EVERY == 0) {
+                    startMilestone(now)
+                }
             } else {
                 badItemsEaten++
                 bearDizzyUntil = now + 1200
@@ -402,6 +418,22 @@ class GameSurfaceView @JvmOverloads constructor(
             sound.gameOver()   // stops music, plays game-over sting
             state = State.GAME_OVER
             items.clear()
+        }
+    }
+
+    /** Every 10th fruit: the Lorax pops up, confetti flies, a cheer chirps. */
+    private fun startMilestone(now: Long) {
+        milestoneUntilMs = now + MILESTONE_MS
+        milestoneText = "$score!"
+        val cheers = arrayOf("WOW!", "YAY!", "SUPER!", "HOORAY!")
+        milestoneCheer = cheers[(score / MILESTONE_EVERY - 1).mod(cheers.size)]
+        sound.cheer()
+        repeat(3) {
+            burst(
+                Random.nextFloat() * 0.6f + 0.2f,
+                Random.nextFloat() * 0.3f + 0.15f,
+                fruitColors[Random.nextInt(3)]
+            )
         }
     }
 
@@ -443,7 +475,7 @@ class GameSurfaceView @JvmOverloads constructor(
             State.WAITING_FOR_CAMERA -> drawCenteredMessage(c, w, h, "Looking for you…", "Stand in front of the screen! 👀")
             State.CALIBRATING -> drawCalibration(c, w, h)
             State.COUNTDOWN -> { drawWorld(c, w, h); drawCountdown(c, w, h) }
-            State.PLAYING -> { drawWorld(c, w, h); drawHud(c, w, h) }
+            State.PLAYING -> { drawWorld(c, w, h); drawHud(c, w, h); drawMilestone(c, w, h) }
             State.PAUSED -> { drawWorld(c, w, h); drawCenteredMessage(c, w, h, "Paused", "Close the menu to keep playing!") }
             State.TIME_UP -> { drawWorld(c, w, h); drawCelebration(c, w, h) }
             State.GAME_OVER -> { drawWorld(c, w, h); drawGameOver(c, w, h) }
@@ -690,15 +722,22 @@ class GameSurfaceView @JvmOverloads constructor(
         c.drawText("🍒 $score", w / 2f, h * 0.16f, textPaint)
 
         if (activeMode == GameMode.FRUIT_FRENZY) {
-            // Countdown clock under the score — turns red for the final 10 s.
-            val secondsLeft = (activeRoundSeconds - playElapsedSec.toInt()).coerceAtLeast(0)
-            textPaint.textSize = h * 0.07f
-            textPaint.color = if (secondsLeft <= 10) cRed else Color.WHITE
-            c.drawText(formatTime(secondsLeft), w / 2f, h * 0.25f, textPaint)
+            if (activeRoundSeconds > 0) {
+                // Countdown clock under the score — turns red for the final 10 s.
+                val secondsLeft = (activeRoundSeconds - playElapsedSec.toInt()).coerceAtLeast(0)
+                textPaint.textSize = h * 0.07f
+                textPaint.color = if (secondsLeft <= 10) cRed else Color.WHITE
+                c.drawText(formatTime(secondsLeft), w / 2f, h * 0.25f, textPaint)
 
-            textPaint.textSize = h * 0.035f
-            textPaint.color = Color.parseColor("#88FFFFFF")
-            c.drawText("Best: $highScore", w / 2f, h * 0.30f, textPaint)
+                textPaint.textSize = h * 0.035f
+                textPaint.color = Color.parseColor("#88FFFFFF")
+                c.drawText("Best: $highScore", w / 2f, h * 0.30f, textPaint)
+            } else {
+                // Endless: no clock, no pressure — just the score and the best.
+                textPaint.textSize = h * 0.035f
+                textPaint.color = Color.parseColor("#88FFFFFF")
+                c.drawText("Best: $highScore", w / 2f, h * 0.22f, textPaint)
+            }
         } else {
             textPaint.textSize = h * 0.045f
             textPaint.color = cCyan
@@ -734,6 +773,116 @@ class GameSurfaceView @JvmOverloads constructor(
         textPaint.textAlign = originalAlign
     }
 
+    /**
+     * Milestone overlay during play: the Lorax slides up from the bottom-left
+     * with a cheer bubble while a big score number pops in the middle.
+     */
+    private fun drawMilestone(c: Canvas, w: Float, h: Float) {
+        val now = System.currentTimeMillis()
+        if (now >= milestoneUntilMs) return
+        val remaining = (milestoneUntilMs - now).toFloat()
+        val elapsed = MILESTONE_MS - remaining
+
+        // Slide up over the first 300 ms, hold, drop back the last 300 ms.
+        val rise = when {
+            elapsed < 300f -> elapsed / 300f
+            remaining < 300f -> remaining / 300f
+            else -> 1f
+        }
+        drawLorax(c, w, h, w * 0.13f, rise, milestoneCheer)
+
+        // Big popping "20!" in the middle: quick scale-in, fade at the end.
+        val popScale = (elapsed / 150f).coerceAtMost(1f)
+        val alpha = ((remaining / 300f).coerceAtMost(1f) * 255).toInt()
+        textPaint.textAlign = Paint.Align.CENTER
+        textPaint.textSize = h * 0.22f * popScale
+        textPaint.style = Paint.Style.STROKE
+        textPaint.strokeWidth = 12f
+        textPaint.color = cSkyTop
+        textPaint.alpha = alpha
+        c.drawText(milestoneText, w / 2f, h * 0.5f, textPaint)
+        textPaint.style = Paint.Style.FILL
+        textPaint.color = cYellow
+        textPaint.alpha = alpha
+        c.drawText(milestoneText, w / 2f, h * 0.5f, textPaint)
+        textPaint.alpha = 255
+    }
+
+    /**
+     * A friendly Lorax: orange, round, and mostly mustache.
+     * [rise] is 0..1 — how far he has popped up above the grass line.
+     */
+    private fun drawLorax(c: Canvas, w: Float, h: Float, cx: Float, rise: Float, bubble: String) {
+        val bodyH = h * 0.24f
+        val bodyW = bodyH * 0.62f
+        // Feet start below the screen edge and rise to stand on the grass.
+        val baseY = h * 1.02f - (h * 0.06f + bodyH) * rise
+        val cOrange2 = Color.parseColor("#F28C28")
+        val cMustache = Color.parseColor("#FFD34D")
+
+        paint.style = Paint.Style.FILL
+
+        // Arms raised in a cheer
+        paint.color = cOrange2
+        c.drawCircle(cx - bodyW * 0.62f, baseY - bodyH * 0.72f, bodyW * 0.16f, paint)
+        c.drawCircle(cx + bodyW * 0.62f, baseY - bodyH * 0.72f, bodyW * 0.16f, paint)
+
+        // Egg-shaped furry body
+        c.drawOval(RectF(cx - bodyW / 2f, baseY - bodyH, cx + bodyW / 2f, baseY), paint)
+
+        // Face patch
+        paint.color = Color.parseColor("#FFC98B")
+        c.drawOval(
+            RectF(cx - bodyW * 0.32f, baseY - bodyH * 0.92f, cx + bodyW * 0.32f, baseY - bodyH * 0.5f),
+            paint
+        )
+
+        // Eyes
+        paint.color = Color.WHITE
+        c.drawCircle(cx - bodyW * 0.15f, baseY - bodyH * 0.78f, bodyW * 0.09f, paint)
+        c.drawCircle(cx + bodyW * 0.15f, baseY - bodyH * 0.78f, bodyW * 0.09f, paint)
+        paint.color = Color.BLACK
+        c.drawCircle(cx - bodyW * 0.15f, baseY - bodyH * 0.77f, bodyW * 0.04f, paint)
+        c.drawCircle(cx + bodyW * 0.15f, baseY - bodyH * 0.77f, bodyW * 0.04f, paint)
+
+        // Bushy yellow eyebrows
+        paint.color = cMustache
+        paint.style = Paint.Style.STROKE
+        paint.strokeWidth = bodyW * 0.09f
+        paint.strokeCap = Paint.Cap.ROUND
+        c.drawLine(cx - bodyW * 0.28f, baseY - bodyH * 0.88f, cx - bodyW * 0.05f, baseY - bodyH * 0.9f, paint)
+        c.drawLine(cx + bodyW * 0.05f, baseY - bodyH * 0.9f, cx + bodyW * 0.28f, baseY - bodyH * 0.88f, paint)
+
+        // THE mustache: two thick droopy arcs under the nose
+        paint.strokeWidth = bodyW * 0.16f
+        val my = baseY - bodyH * 0.62f
+        c.drawArc(cx - bodyW * 0.52f, my - bodyW * 0.1f, cx, my + bodyW * 0.42f, 200f, 120f, false, paint)
+        c.drawArc(cx, my - bodyW * 0.1f, cx + bodyW * 0.52f, my + bodyW * 0.42f, 220f, 120f, false, paint)
+        paint.strokeCap = Paint.Cap.BUTT
+        paint.style = Paint.Style.FILL
+
+        // Speech bubble, fully visible only once he's up
+        if (rise > 0.85f && bubble.isNotEmpty()) {
+            textPaint.textAlign = Paint.Align.CENTER
+            textPaint.textSize = h * 0.045f
+            val tw = textPaint.measureText(bubble)
+            val bx = cx + bodyW * 0.9f
+            val by = baseY - bodyH * 1.18f
+            val pad = h * 0.02f
+            paint.color = Color.WHITE
+            val rect = RectF(bx - tw / 2f - pad, by - h * 0.045f - pad, bx + tw / 2f + pad, by + pad)
+            c.drawRoundRect(rect, pad, pad, paint)
+            val tail = Path()
+            tail.moveTo(bx - tw * 0.3f, by + pad * 0.8f)
+            tail.lineTo(bx - tw * 0.1f, by + pad * 0.8f)
+            tail.lineTo(cx + bodyW * 0.4f, baseY - bodyH * 0.95f)
+            tail.close()
+            c.drawPath(tail, paint)
+            textPaint.color = cSkyTop
+            c.drawText(bubble, bx, by - h * 0.008f, textPaint)
+        }
+    }
+
     private fun formatTime(totalSeconds: Int): String {
         val m = totalSeconds / 60
         val s = totalSeconds % 60
@@ -759,6 +908,9 @@ class GameSurfaceView @JvmOverloads constructor(
         val cx = w / 2f
         val cy = h / 2f
         val bounce = sin(System.currentTimeMillis() / 250.0).toFloat() * h * 0.01f
+
+        // The Lorax joins the party, bouncing along in the corner.
+        drawLorax(c, w, h, w * 0.13f, 1f + bounce / h, "HOORAY!")
 
         textPaint.style = Paint.Style.FILL
         textPaint.textAlign = Paint.Align.CENTER
@@ -849,6 +1001,11 @@ class GameSurfaceView @JvmOverloads constructor(
         const val BEAR_HALF_W = 0.07f
         const val BEAR_HALF_H = 0.09f
         const val LERP_SPEED = 9f          // render-side smoothing factor
+        const val EASY_CATCH_BONUS = 1.4f  // EASY catch box is 40% wider than the bear
+
+        // Milestone cheers (FRUIT_FRENZY)
+        const val MILESTONE_EVERY = 10
+        const val MILESTONE_MS = 2200L
 
         // Items — gentle, child-friendly pace
         const val ITEM_HALF = 0.045f

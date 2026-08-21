@@ -16,8 +16,10 @@ Designed for toddlers and young kids — **nothing bad can happen**:
 
 - Only Truffula fruits fall. No bombs, no boots, no rocks.
 - Missing a fruit costs nothing — no strikes, no fail state, no sad sounds.
-- Catch as many fruits as you can before the timer runs out (**30 seconds, 1 minute, or 2 minutes** — pick in the menu).
-- The round always ends in a confetti celebration: *"You caught 23 truffula fruits!"*
+- Catch as many fruits as you can before the timer runs out (**30 seconds, 1 minute, 2 minutes, or ∞ endless** — pick in the menu).
+- Every 10th fruit, **the Lorax pops up to cheer** with confetti and a happy chirp.
+- On Easy, the catch box is wider than the bear looks, so near-misses still count.
+- Timed rounds always end in a confetti celebration: *"You caught 23 truffula fruits!"* — and in endless mode the game simply never ends.
 
 ### 🪨 Classic mode
 

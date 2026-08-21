@@ -35,6 +35,7 @@ class MainActivity : AppCompatActivity() {
     private lateinit var btnTime30: Button
     private lateinit var btnTime60: Button
     private lateinit var btnTime120: Button
+    private lateinit var btnTimeEndless: Button
     private lateinit var btnEasy: Button
     private lateinit var btnMedium: Button
     private lateinit var btnHard: Button
@@ -66,6 +67,7 @@ class MainActivity : AppCompatActivity() {
         btnTime30 = findViewById(R.id.btnTime30)
         btnTime60 = findViewById(R.id.btnTime60)
         btnTime120 = findViewById(R.id.btnTime120)
+        btnTimeEndless = findViewById(R.id.btnTimeEndless)
         btnEasy = findViewById(R.id.btnEasy)
         btnMedium = findViewById(R.id.btnMedium)
         btnHard = findViewById(R.id.btnHard)
@@ -83,6 +85,7 @@ class MainActivity : AppCompatActivity() {
         btnTime30.setOnClickListener { updateRoundSeconds(30) }
         btnTime60.setOnClickListener { updateRoundSeconds(60) }
         btnTime120.setOnClickListener { updateRoundSeconds(120) }
+        btnTimeEndless.setOnClickListener { updateRoundSeconds(0) }   // 0 = endless
         btnEasy.setOnClickListener { updateDifficulty(GameSurfaceView.Difficulty.EASY) }
         btnMedium.setOnClickListener { updateDifficulty(GameSurfaceView.Difficulty.MEDIUM) }
         btnHard.setOnClickListener { updateDifficulty(GameSurfaceView.Difficulty.HARD) }
@@ -148,8 +151,10 @@ class MainActivity : AppCompatActivity() {
      * scores live in their own world entirely.
      */
     private fun getHighScoreKey(): String = when (gameView.gameMode) {
-        GameSurfaceView.GameMode.FRUIT_FRENZY ->
-            "hs_frenzy_${gameView.roundSeconds}_${gameView.difficulty.name.lowercase()}"
+        GameSurfaceView.GameMode.FRUIT_FRENZY -> {
+            val len = if (gameView.roundSeconds > 0) "${gameView.roundSeconds}" else "endless"
+            "hs_frenzy_${len}_${gameView.difficulty.name.lowercase()}"
+        }
         GameSurfaceView.GameMode.CLASSIC ->
             "hs_classic_${gameView.difficulty.name.lowercase()}"
     }
@@ -199,6 +204,7 @@ class MainActivity : AppCompatActivity() {
         tintToggle(btnTime30, yellow, secs == 30)
         tintToggle(btnTime60, yellow, secs == 60)
         tintToggle(btnTime120, yellow, secs == 120)
+        tintToggle(btnTimeEndless, yellow, secs == 0)
 
         val diff = gameView.difficulty
         tintToggle(btnEasy, lime, diff == GameSurfaceView.Difficulty.EASY)

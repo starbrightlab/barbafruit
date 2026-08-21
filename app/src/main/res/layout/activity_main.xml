@@ -179,9 +179,10 @@
                         android:layout_width="match_parent"
                         android:layout_height="wrap_content"
                         android:orientation="horizontal">
-                        <Button android:id="@+id/btnTime30" android:layout_width="0dp" android:layout_height="56dp" android:layout_weight="1" android:layout_margin="2dp" android:text="30 SEC" android:textSize="12sp" />
-                        <Button android:id="@+id/btnTime60" android:layout_width="0dp" android:layout_height="56dp" android:layout_weight="1" android:layout_margin="2dp" android:text="1 MIN" android:textSize="12sp" />
-                        <Button android:id="@+id/btnTime120" android:layout_width="0dp" android:layout_height="56dp" android:layout_weight="1" android:layout_margin="2dp" android:text="2 MIN" android:textSize="12sp" />
+                        <Button android:id="@+id/btnTime30" android:layout_width="0dp" android:layout_height="56dp" android:layout_weight="1" android:layout_margin="2dp" android:text="30 SEC" android:textSize="11sp" />
+                        <Button android:id="@+id/btnTime60" android:layout_width="0dp" android:layout_height="56dp" android:layout_weight="1" android:layout_margin="2dp" android:text="1 MIN" android:textSize="11sp" />
+                        <Button android:id="@+id/btnTime120" android:layout_width="0dp" android:layout_height="56dp" android:layout_weight="1" android:layout_margin="2dp" android:text="2 MIN" android:textSize="11sp" />
+                        <Button android:id="@+id/btnTimeEndless" android:layout_width="0dp" android:layout_height="56dp" android:layout_weight="1" android:layout_margin="2dp" android:text="∞" android:textSize="18sp" />
                     </LinearLayout>
                 </LinearLayout>
 
