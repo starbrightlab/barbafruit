@@ -521,28 +521,23 @@ class GameSurfaceView @JvmOverloads constructor(
      * pom-poms on striped trunks that the fruit appears to drop out of.
      */
     private fun drawTruffulaCanopy(c: Canvas, w: Float, h: Float) {
-        val tufts = floatArrayOf(0.08f, 0.30f, 0.52f, 0.74f, 0.94f)
+        // Four tufts, positioned to leave the corners (strike counters,
+        // menu button) and the top-center (score) free of overlap.
+        val tufts = floatArrayOf(0.16f, 0.38f, 0.62f, 0.84f)
         paint.style = Paint.Style.FILL
         for (i in tufts.indices) {
             val cx = tufts[i] * w
             val color = fruitColors[i % 3]
-            val r = h * 0.075f
+            val r = h * 0.065f
+            val tuftY = h * 0.035f + r * 0.45f
 
-            // Striped trunk poking down from offscreen.
-            val trunkW = w * 0.012f
-            val trunkBottom = h * 0.035f
-            paint.color = Color.parseColor("#F5E9C8")
-            c.drawRect(cx - trunkW, -4f, cx + trunkW, trunkBottom, paint)
-            paint.color = Color.parseColor("#3A2A20")
-            c.drawRect(cx - trunkW, trunkBottom * 0.35f, cx + trunkW, trunkBottom * 0.6f, paint)
-
-            // Fluffy tuft: one fat circle plus overlapping puffs.
+            // Fluffy tuft hugging the top edge: a fat circle plus puffs.
             paint.color = color
-            c.drawCircle(cx, trunkBottom + r * 0.55f, r, paint)
-            c.drawCircle(cx - r * 0.75f, trunkBottom + r * 0.25f, r * 0.65f, paint)
-            c.drawCircle(cx + r * 0.75f, trunkBottom + r * 0.25f, r * 0.65f, paint)
+            c.drawCircle(cx, tuftY, r, paint)
+            c.drawCircle(cx - r * 0.75f, tuftY - r * 0.3f, r * 0.65f, paint)
+            c.drawCircle(cx + r * 0.75f, tuftY - r * 0.3f, r * 0.65f, paint)
             paint.color = withAlpha(Color.WHITE, 50)
-            c.drawCircle(cx - r * 0.3f, trunkBottom + r * 0.3f, r * 0.45f, paint)
+            c.drawCircle(cx - r * 0.3f, tuftY - r * 0.2f, r * 0.45f, paint)
         }
     }
 
@@ -747,27 +742,29 @@ class GameSurfaceView @JvmOverloads constructor(
             textPaint.color = Color.parseColor("#88FFFFFF")
             c.drawText("Difficulty: $difficulty", w / 2f, h * 0.27f, textPaint)
 
-            // Bad-items indicator (top-left)
+            // Strike indicators sit just below the canopy tufts so they never
+            // fight the tuft colors (or the menu button / PiP preview) for
+            // legibility.
+            val indicatorY = h * 0.18f
             textPaint.textSize = h * 0.04f
             textPaint.textAlign = Paint.Align.LEFT
             textPaint.color = Color.WHITE
-            c.drawText("Rocks: ", w * 0.05f, h * 0.08f, textPaint)
+            c.drawText("Rocks: ", w * 0.05f, indicatorY, textPaint)
             val badText = (1..3).joinToString(" ") { i ->
                 if (i <= badItemsEaten) "💥" else "⚪"
             }
             textPaint.color = cRed
-            c.drawText(badText, w * 0.05f + textPaint.measureText("Rocks: "), h * 0.08f, textPaint)
+            c.drawText(badText, w * 0.05f + textPaint.measureText("Rocks: "), indicatorY, textPaint)
 
-            // Dropped-fruit indicator (top-right)
             textPaint.textAlign = Paint.Align.RIGHT
             textPaint.color = Color.WHITE
             val fruitsText = (1..3).joinToString(" ") { i ->
                 if (i <= fruitsDropped) "❌" else "🍒"
             }
             val label = "Dropped: "
-            c.drawText(fruitsText, w * 0.95f, h * 0.08f, textPaint)
+            c.drawText(fruitsText, w * 0.95f, indicatorY, textPaint)
             textPaint.color = cLime
-            c.drawText(label, w * 0.95f - textPaint.measureText(fruitsText) - 10f, h * 0.08f, textPaint)
+            c.drawText(label, w * 0.95f - textPaint.measureText(fruitsText) - 10f, indicatorY, textPaint)
         }
 
         textPaint.textAlign = originalAlign
@@ -811,9 +808,12 @@ class GameSurfaceView @JvmOverloads constructor(
     /**
      * A friendly Lorax: orange, round, and mostly mustache.
      * [rise] is 0..1 — how far he has popped up above the grass line.
+     * [scale] shrinks him where screen text needs the room.
      */
-    private fun drawLorax(c: Canvas, w: Float, h: Float, cx: Float, rise: Float, bubble: String) {
-        val bodyH = h * 0.24f
+    private fun drawLorax(
+        c: Canvas, w: Float, h: Float, cx: Float, rise: Float, bubble: String, scale: Float = 1f
+    ) {
+        val bodyH = h * 0.24f * scale
         val bodyW = bodyH * 0.62f
         // Feet start below the screen edge and rise to stand on the grass.
         val baseY = h * 1.02f - (h * 0.06f + bodyH) * rise
@@ -853,11 +853,12 @@ class GameSurfaceView @JvmOverloads constructor(
         c.drawLine(cx - bodyW * 0.28f, baseY - bodyH * 0.88f, cx - bodyW * 0.05f, baseY - bodyH * 0.9f, paint)
         c.drawLine(cx + bodyW * 0.05f, baseY - bodyH * 0.9f, cx + bodyW * 0.28f, baseY - bodyH * 0.88f, paint)
 
-        // THE mustache: two thick droopy arcs under the nose
-        paint.strokeWidth = bodyW * 0.16f
-        val my = baseY - bodyH * 0.62f
-        c.drawArc(cx - bodyW * 0.52f, my - bodyW * 0.1f, cx, my + bodyW * 0.42f, 200f, 120f, false, paint)
-        c.drawArc(cx, my - bodyW * 0.1f, cx + bodyW * 0.52f, my + bodyW * 0.42f, 220f, 120f, false, paint)
+        // THE mustache: two thick droopy arcs under the nose — his defining
+        // feature, so it gets to be a little oversized.
+        paint.strokeWidth = bodyW * 0.22f
+        val my = baseY - bodyH * 0.6f
+        c.drawArc(cx - bodyW * 0.64f, my - bodyW * 0.12f, cx + bodyW * 0.04f, my + bodyW * 0.52f, 200f, 120f, false, paint)
+        c.drawArc(cx - bodyW * 0.04f, my - bodyW * 0.12f, cx + bodyW * 0.64f, my + bodyW * 0.52f, 220f, 120f, false, paint)
         paint.strokeCap = Paint.Cap.BUTT
         paint.style = Paint.Style.FILL
 
@@ -909,8 +910,9 @@ class GameSurfaceView @JvmOverloads constructor(
         val cy = h / 2f
         val bounce = sin(System.currentTimeMillis() / 250.0).toFloat() * h * 0.01f
 
-        // The Lorax joins the party, bouncing along in the corner.
-        drawLorax(c, w, h, w * 0.13f, 1f + bounce / h, "HOORAY!")
+        // The Lorax joins the party, bouncing in the corner — drawn smaller
+        // here so his speech bubble stays clear of the centered text block.
+        drawLorax(c, w, h, w * 0.10f, 1f + bounce / h, "HOORAY!", scale = 0.8f)
 
         textPaint.style = Paint.Style.FILL
         textPaint.textAlign = Paint.Align.CENTER
