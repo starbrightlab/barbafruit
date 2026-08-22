@@ -1076,13 +1076,16 @@ class GameSurfaceView @JvmOverloads constructor(
         val remaining = (milestoneUntilMs - now).toFloat()
         val elapsed = MILESTONE_MS - remaining
 
-        // Slide up over the first 300 ms, hold, drop back the last 300 ms.
+        // Spring up with an overshoot, hold, drop back the last 300 ms.
         val rise = when {
-            elapsed < 300f -> elapsed / 300f
+            elapsed < 300f -> easeOutBack(elapsed / 300f)
             remaining < 300f -> remaining / 300f
             else -> 1f
         }
-        drawLorax(c, w, h, w * 0.13f, rise, milestoneCheer)
+        drawLorax(
+            c, w, h, w * 0.13f, rise, milestoneCheer,
+            cheer = true, lookX = ((bearX - 0.13f) * 3f).coerceIn(-1f, 1f), lookY = 0.2f
+        )
 
         // Big popping "20!" in the middle: quick scale-in, fade at the end.
         val popScale = (elapsed / 150f).coerceAtMost(1f)
@@ -1106,75 +1109,155 @@ class GameSurfaceView @JvmOverloads constructor(
      * [rise] is 0..1 — how far he has popped up above the grass line.
      * [scale] shrinks him where screen text needs the room.
      */
+    /** Ease-out-back: overshoots the target then settles — the pop-up spring. */
+    private fun easeOutBack(p: Float): Float {
+        val c1 = 1.70158f
+        val c3 = c1 + 1f
+        return 1f + c3 * (p - 1f) * (p - 1f) * (p - 1f) + c1 * (p - 1f) * (p - 1f)
+    }
+
+    /**
+     * The Lorax character rig. Local coordinate space: origin at the feet,
+     * y negative = up. [cheer] adds pumping arms, excited hops with squash,
+     * raised brows, and a livelier mustache jiggle; [rise] is 0..1+ (the
+     * pop-up spring may overshoot past 1).
+     */
     private fun drawLorax(
-        c: Canvas, w: Float, h: Float, cx: Float, rise: Float, bubble: String, scale: Float = 1f
+        c: Canvas, w: Float, h: Float, cx: Float, rise: Float, bubble: String,
+        scale: Float = 1f, cheer: Boolean = false, lookX: Float = 0f, lookY: Float = 0f
     ) {
+        val t = System.currentTimeMillis()
         val bodyB = h * 0.24f * scale
         val bodyW = bodyB * 0.62f
-        // Feet start below the screen edge and rise to stand on the grass.
-        val baseY = h * 1.02f - (h * 0.06f + bodyB) * rise
+        val hop = if (cheer) abs(sin(t / 260.0)).toFloat() else 0f
+        val sqL = if (cheer) 1f - 0.06f * (1f - hop) else 1f
+        val pump = if (cheer) sin(t / 130.0).toFloat() else 0f
+        val mJig = (if (cheer) sin(t / 140.0).toFloat() * 0.010f
+                    else sin(t / 600.0).toFloat() * 0.004f) * bodyB
+        val blink = ((t + 1300) % 3800) < 130
+        val baseY = h * 1.02f - (h * 0.06f + bodyB) * rise - hop * 0.055f * bodyB
+        val orange = cLoraxOrange
+        val orangeShade = shade(cLoraxOrange, 0.80f)
 
         paint.style = Paint.Style.FILL
-        // Feet
-        paint.color = shade(cLoraxOrange, 0.82f)
-        ell(c, cx - bodyW * 0.24f, baseY - bodyB * 0.02f, bodyW * 0.17f, bodyB * 0.045f)
-        ell(c, cx + bodyW * 0.24f, baseY - bodyB * 0.02f, bodyW * 0.17f, bodyB * 0.045f)
-        // Arms raised in a cheer, with mitts
-        paint.color = cLoraxOrange
-        ell(c, cx - bodyW * 0.55f, baseY - bodyB * 0.66f, bodyB * 0.115f, bodyB * 0.05f, -46f)
-        ell(c, cx + bodyW * 0.55f, baseY - bodyB * 0.66f, bodyB * 0.115f, bodyB * 0.05f, 46f)
-        ell(c, cx - bodyW * 0.68f, baseY - bodyB * 0.76f, bodyB * 0.052f, bodyB * 0.052f)
-        ell(c, cx + bodyW * 0.68f, baseY - bodyB * 0.76f, bodyB * 0.052f, bodyB * 0.052f)
-        // Egg body with side fur puffs
-        ell(c, cx - bodyW * 0.46f, baseY - bodyB * 0.36f, bodyW * 0.10f, bodyW * 0.10f)
-        ell(c, cx + bodyW * 0.46f, baseY - bodyB * 0.36f, bodyW * 0.10f, bodyW * 0.10f)
-        ell(c, cx - bodyW * 0.40f, baseY - bodyB * 0.18f, bodyW * 0.10f, bodyW * 0.10f)
-        ell(c, cx + bodyW * 0.40f, baseY - bodyB * 0.18f, bodyW * 0.10f, bodyW * 0.10f)
-        ell(c, cx, baseY - bodyB * 0.48f, bodyW * 0.50f, bodyB * 0.50f)
-        // Face patch
+        // Contact shadow fades in once he's mostly out of the grass.
+        if (rise > 0.5f) {
+            val a = 51f * (((rise - 0.5f) * 2f).coerceAtMost(1f)) * (1f - hop * 0.35f)
+            paint.color = Color.argb(a.toInt(), 0, 0, 0)
+            ell(c, cx, h * 0.965f, bodyW * (0.62f - hop * 0.12f), 0.035f * bodyB)
+        }
+
+        c.save()
+        c.translate(cx, baseY)
+        c.scale(1f + (1f - sqL) * 0.9f, sqL)
+
+        // ---- Feet ----
+        paint.color = orangeShade
+        ell(c, -bodyW * 0.24f, -0.02f * bodyB, bodyW * 0.17f, 0.045f * bodyB)
+        ell(c, bodyW * 0.24f, -0.02f * bodyB, bodyW * 0.17f, 0.045f * bodyB)
+
+        // ---- Arms: hinged at the shoulders, pumping when he cheers ----
+        for (sgn in intArrayOf(-1, 1)) {
+            val angle = if (sgn < 0) -125f - pump * 13f else -55f + pump * 13f
+            c.save()
+            c.translate(sgn * bodyW * 0.36f, -0.60f * bodyB)
+            c.rotate(angle)
+            paint.color = orange
+            ell(c, 0.13f * bodyB, 0f, 0.13f * bodyB, 0.048f * bodyB)
+            ell(c, 0.27f * bodyB, 0f, 0.055f * bodyB, 0.055f * bodyB)   // mitt
+            c.restore()
+        }
+
+        // ---- Egg body, cel-shaded, with side fur puffs ----
+        paint.color = orangeShade
+        ell(c, 0.02f * bodyW, -0.47f * bodyB, bodyW * 0.505f, bodyB * 0.50f)
+        paint.color = orange
+        ell(c, -bodyW * 0.46f, -0.36f * bodyB, bodyW * 0.10f, bodyW * 0.10f)
+        ell(c, bodyW * 0.46f, -0.36f * bodyB, bodyW * 0.10f, bodyW * 0.10f)
+        ell(c, -bodyW * 0.40f, -0.18f * bodyB, bodyW * 0.10f, bodyW * 0.10f)
+        ell(c, bodyW * 0.40f, -0.18f * bodyB, bodyW * 0.10f, bodyW * 0.10f)
+        ell(c, -0.015f * bodyW, -0.49f * bodyB, bodyW * 0.49f, bodyB * 0.49f)
+
+        // ---- Face patch ----
         paint.color = cLoraxFace
-        ell(c, cx, baseY - bodyB * 0.72f, bodyW * 0.36f, bodyB * 0.195f)
-        // Eyes with highlights
-        val ey = baseY - bodyB * 0.765f
-        paint.color = Color.WHITE
-        ell(c, cx - bodyW * 0.16f, ey, bodyW * 0.10f, bodyW * 0.115f)
-        ell(c, cx + bodyW * 0.16f, ey, bodyW * 0.10f, bodyW * 0.115f)
-        paint.color = Color.parseColor("#2B1B0E")
-        ell(c, cx - bodyW * 0.15f, ey + bodyW * 0.02f, bodyW * 0.048f, bodyW * 0.055f)
-        ell(c, cx + bodyW * 0.15f, ey + bodyW * 0.02f, bodyW * 0.048f, bodyW * 0.055f)
-        paint.color = Color.WHITE
-        c.drawCircle(cx - bodyW * 0.135f, ey, bodyW * 0.018f, paint)
-        c.drawCircle(cx + bodyW * 0.165f, ey, bodyW * 0.018f, paint)
-        // Bushy brows — thick, angled up and out
-        paint.color = cMustache
+        ell(c, 0f, -0.72f * bodyB, bodyW * 0.36f, bodyB * 0.195f)
+
+        // ---- Eyes: whites + rims, iris, pupil, double highlight / blink ----
+        val ey = -0.765f * bodyB
+        val lx = lookX * 0.020f * bodyW
+        val ly = lookY * 0.016f * bodyW
+        if (blink) {
+            paint.style = Paint.Style.STROKE
+            paint.strokeWidth = 0.028f * bodyW
+            paint.strokeCap = Paint.Cap.ROUND
+            paint.color = shade(cLoraxFace, 0.55f)
+            val r = 0.09f * bodyW
+            c.drawArc(-0.16f * bodyW - r, ey - 0.03f * bodyW - r, -0.16f * bodyW + r, ey - 0.03f * bodyW + r, 45f, 90f, false, paint)
+            c.drawArc(0.16f * bodyW - r, ey - 0.03f * bodyW - r, 0.16f * bodyW + r, ey - 0.03f * bodyW + r, 45f, 90f, false, paint)
+            paint.strokeCap = Paint.Cap.BUTT
+            paint.style = Paint.Style.FILL
+        } else {
+            paint.color = Color.WHITE
+            ell(c, -0.16f * bodyW, ey, 0.10f * bodyW, 0.115f * bodyW)
+            ell(c, 0.16f * bodyW, ey, 0.10f * bodyW, 0.115f * bodyW)
+            paint.style = Paint.Style.STROKE
+            paint.strokeWidth = 0.014f * bodyW
+            paint.color = shade(cLoraxFace, 0.62f)
+            c.drawOval(-0.26f * bodyW, ey - 0.115f * bodyW, -0.06f * bodyW, ey + 0.115f * bodyW, paint)
+            c.drawOval(0.06f * bodyW, ey - 0.115f * bodyW, 0.26f * bodyW, ey + 0.115f * bodyW, paint)
+            paint.style = Paint.Style.FILL
+            paint.color = Color.parseColor("#6B4423")
+            ell(c, -0.16f * bodyW + lx, ey + 0.015f * bodyW + ly, 0.058f * bodyW, 0.062f * bodyW)
+            ell(c, 0.16f * bodyW + lx, ey + 0.015f * bodyW + ly, 0.058f * bodyW, 0.062f * bodyW)
+            paint.color = Color.parseColor("#1C1008")
+            ell(c, -0.16f * bodyW + lx, ey + 0.018f * bodyW + ly, 0.032f * bodyW, 0.035f * bodyW)
+            ell(c, 0.16f * bodyW + lx, ey + 0.018f * bodyW + ly, 0.032f * bodyW, 0.035f * bodyW)
+            paint.color = Color.WHITE
+            ell(c, -0.178f * bodyW + lx, ey - 0.006f * bodyW + ly, 0.019f * bodyW, 0.019f * bodyW)
+            ell(c, 0.142f * bodyW + lx, ey - 0.006f * bodyW + ly, 0.019f * bodyW, 0.019f * bodyW)
+            ell(c, -0.146f * bodyW + lx, ey + 0.034f * bodyW + ly, 0.009f * bodyW, 0.009f * bodyW)
+            ell(c, 0.174f * bodyW + lx, ey + 0.034f * bodyW + ly, 0.009f * bodyW, 0.009f * bodyW)
+        }
+
+        // ---- Brows: THE eyebrows — resting low and stern, raised in a cheer ----
+        val browLift = if (cheer) 0.045f * bodyB else 0f
+        val browTilt = if (cheer) 0.020f * bodyB else 0f
         paint.style = Paint.Style.STROKE
         paint.strokeCap = Paint.Cap.ROUND
-        paint.strokeWidth = bodyW * 0.145f
-        c.drawLine(cx - bodyW * 0.335f, baseY - bodyB * 0.845f, cx - bodyW * 0.06f, baseY - bodyB * 0.875f, paint)
-        c.drawLine(cx + bodyW * 0.06f, baseY - bodyB * 0.875f, cx + bodyW * 0.335f, baseY - bodyB * 0.845f, paint)
+        paint.strokeWidth = bodyW * 0.115f
+        paint.color = cMustache
+        c.drawLine(-bodyW * 0.36f, -0.865f * bodyB - browLift - browTilt, -bodyW * 0.11f, -0.895f * bodyB - browLift, paint)
+        c.drawLine(bodyW * 0.11f, -0.895f * bodyB - browLift, bodyW * 0.36f, -0.865f * bodyB - browLift - browTilt, paint)
         paint.strokeCap = Paint.Cap.BUTT
         paint.style = Paint.Style.FILL
-        // Nose
-        paint.color = cLoraxNose
-        ell(c, cx, baseY - bodyB * 0.665f, bodyW * 0.075f, bodyW * 0.055f)
-        // THE mustache — one sculpted filled shape, drooping past the body
-        val ny = baseY - bodyB * 0.66f
-        paint.color = cMustache
-        val stache = Path().apply {
-            moveTo(cx, ny + bodyB * 0.035f)
-            cubicTo(cx - bodyW * 0.30f, ny - bodyB * 0.055f, cx - bodyW * 0.56f, ny - bodyB * 0.005f, cx - bodyW * 0.62f, ny + bodyB * 0.13f)
-            cubicTo(cx - bodyW * 0.655f, ny + bodyB * 0.225f, cx - bodyW * 0.615f, ny + bodyB * 0.29f, cx - bodyW * 0.52f, ny + bodyB * 0.285f)
-            cubicTo(cx - bodyW * 0.38f, ny + bodyB * 0.275f, cx - bodyW * 0.20f, ny + bodyB * 0.195f, cx - bodyW * 0.075f, ny + bodyB * 0.155f)
-            quadTo(cx - bodyW * 0.02f, ny + bodyB * 0.14f, cx, ny + bodyB * 0.145f)
-            quadTo(cx + bodyW * 0.02f, ny + bodyB * 0.14f, cx + bodyW * 0.075f, ny + bodyB * 0.155f)
-            cubicTo(cx + bodyW * 0.20f, ny + bodyB * 0.195f, cx + bodyW * 0.38f, ny + bodyB * 0.275f, cx + bodyW * 0.52f, ny + bodyB * 0.285f)
-            cubicTo(cx + bodyW * 0.615f, ny + bodyB * 0.29f, cx + bodyW * 0.655f, ny + bodyB * 0.225f, cx + bodyW * 0.62f, ny + bodyB * 0.13f)
-            cubicTo(cx + bodyW * 0.56f, ny - bodyB * 0.005f, cx + bodyW * 0.30f, ny - bodyB * 0.055f, cx, ny + bodyB * 0.035f)
-            close()
-        }
-        c.drawPath(stache, paint)
 
-        // Speech bubble, fully visible only once he's up
+        // ---- Nose ----
+        paint.color = cLoraxNose
+        ell(c, 0f, -0.665f * bodyB, bodyW * 0.075f, bodyW * 0.055f)
+
+        // ---- THE mustache: shade layer then main, jiggling with the motion ----
+        val ny = -0.66f * bodyB + mJig
+        for (layer in 0..1) {
+            val dy = if (layer == 0) 0.016f * bodyB else 0f
+            paint.color = if (layer == 0) shade(cMustache, 0.78f) else cMustache
+            val stache = Path().apply {
+                moveTo(0f, ny + 0.035f * bodyB + dy)
+                cubicTo(-bodyW * 0.30f, ny - 0.055f * bodyB + dy, -bodyW * 0.56f, ny - 0.005f * bodyB + dy, -bodyW * 0.62f, ny + 0.13f * bodyB + dy)
+                cubicTo(-bodyW * 0.655f, ny + 0.225f * bodyB + dy, -bodyW * 0.615f, ny + 0.29f * bodyB + dy, -bodyW * 0.52f, ny + 0.285f * bodyB + dy)
+                cubicTo(-bodyW * 0.38f, ny + 0.275f * bodyB + dy, -bodyW * 0.20f, ny + 0.195f * bodyB + dy, -bodyW * 0.075f, ny + 0.155f * bodyB + dy)
+                quadTo(-bodyW * 0.02f, ny + 0.14f * bodyB + dy, 0f, ny + 0.145f * bodyB + dy)
+                quadTo(bodyW * 0.02f, ny + 0.14f * bodyB + dy, bodyW * 0.075f, ny + 0.155f * bodyB + dy)
+                cubicTo(bodyW * 0.20f, ny + 0.195f * bodyB + dy, bodyW * 0.38f, ny + 0.275f * bodyB + dy, bodyW * 0.52f, ny + 0.285f * bodyB + dy)
+                cubicTo(bodyW * 0.615f, ny + 0.29f * bodyB + dy, bodyW * 0.655f, ny + 0.225f * bodyB + dy, bodyW * 0.62f, ny + 0.13f * bodyB + dy)
+                cubicTo(bodyW * 0.56f, ny - 0.005f * bodyB + dy, bodyW * 0.30f, ny - 0.055f * bodyB + dy, 0f, ny + 0.035f * bodyB + dy)
+                close()
+            }
+            c.drawPath(stache, paint)
+        }
+
+        c.restore()
+
+        // ---- Speech bubble, fully visible only once he's up ----
         if (rise > 0.85f && bubble.isNotEmpty()) {
             textPaint.textAlign = Paint.Align.CENTER
             textPaint.textSize = h * 0.045f
@@ -1222,9 +1305,9 @@ class GameSurfaceView @JvmOverloads constructor(
         val cy = h / 2f
         val bounce = sin(System.currentTimeMillis() / 250.0).toFloat() * h * 0.01f
 
-        // The Lorax joins the party, bouncing in the corner — drawn smaller
+        // The Lorax joins the party, hopping in the corner — drawn smaller
         // here so his speech bubble stays clear of the centered text block.
-        drawLorax(c, w, h, w * 0.10f, 1f + bounce / h, "HOORAY!", scale = 0.8f)
+        drawLorax(c, w, h, w * 0.10f, 1f, "HOORAY!", scale = 0.8f, cheer = true, lookX = 0.5f, lookY = -0.4f)
 
         textPaint.style = Paint.Style.FILL
         textPaint.textAlign = Paint.Align.CENTER
