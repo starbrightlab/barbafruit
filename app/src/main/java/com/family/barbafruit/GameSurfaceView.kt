@@ -165,14 +165,60 @@ class GameSurfaceView @JvmOverloads constructor(
     private val cSkyBottom = Color.parseColor("#7A4A8F")
     private val cGrass = Color.parseColor("#2E7D5B")
     private val cGrassLight = Color.parseColor("#3E9C6F")
+    private val cHillBack = Color.parseColor("#27584E")
+    private val cHillMid = Color.parseColor("#2B6156")
     private val cBearFur = Color.parseColor("#8A5A33")
+    private val cBearFurDark = Color.parseColor("#6E4626")
     private val cBearMuzzle = Color.parseColor("#D9A972")
     private val cBearDark = Color.parseColor("#4A2E17")
+    private val cTongue = Color.parseColor("#E8837E")
+    private val cCream = Color.parseColor("#F5E9C8")
+    private val cTrunkBand = Color.parseColor("#C99B66")
+    private val cLoraxOrange = Color.parseColor("#F28C28")
+    private val cLoraxFace = Color.parseColor("#FFC98B")
+    private val cMustache = Color.parseColor("#FFD34D")
+    private val cLoraxNose = Color.parseColor("#D9822B")
     private val fruitColors = intArrayOf(0, 0, 0).also {
         it[0] = cPink; it[1] = cOrange; it[2] = cYellow
     }
     private var skyShader: LinearGradient? = null
     private var skyShaderHeight = 0f
+
+    // The static scenery (hills, grass, truffula grove) is expensive to
+    // re-draw every frame, so it's baked into a bitmap per surface size.
+    private var sceneryBitmap: Bitmap? = null
+    private val trunkPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        style = Paint.Style.STROKE
+        strokeCap = Paint.Cap.ROUND
+    }
+
+    /** Multiply a color's RGB channels by [f] (f < 1 darkens). */
+    private fun shade(color: Int, f: Float): Int = Color.argb(
+        Color.alpha(color),
+        (Color.red(color) * f).toInt().coerceIn(0, 255),
+        (Color.green(color) * f).toInt().coerceIn(0, 255),
+        (Color.blue(color) * f).toInt().coerceIn(0, 255)
+    )
+
+    /** Mix a color toward white by [f] (0..1). */
+    private fun lighten(color: Int, f: Float): Int = Color.argb(
+        Color.alpha(color),
+        (Color.red(color) + (255 - Color.red(color)) * f).toInt(),
+        (Color.green(color) + (255 - Color.green(color)) * f).toInt(),
+        (Color.blue(color) + (255 - Color.blue(color)) * f).toInt()
+    )
+
+    /** Filled ellipse centered at (x, y), optionally rotated. */
+    private fun ell(c: Canvas, x: Float, y: Float, rx: Float, ry: Float, rotDeg: Float = 0f) {
+        if (rotDeg == 0f) {
+            c.drawOval(x - rx, y - ry, x + rx, y + ry, paint)
+        } else {
+            c.save()
+            c.rotate(rotDeg, x, y)
+            c.drawOval(x - rx, y - ry, x + rx, y + ry, paint)
+            c.restore()
+        }
+    }
 
     // ======================== Thread plumbing ========================
     private var thread: GameThread? = null
@@ -470,6 +516,7 @@ class GameSurfaceView @JvmOverloads constructor(
         val w = c.width.toFloat()
         val h = c.height.toFloat()
         drawSky(c, w, h)
+        drawScenery(c, w, h)
 
         when (state) {
             State.WAITING_FOR_CAMERA -> drawCenteredMessage(c, w, h, "Looking for you…", "Stand in front of the screen! 👀")
@@ -504,41 +551,93 @@ class GameSurfaceView @JvmOverloads constructor(
         }
     }
 
-    private fun drawGround(c: Canvas, w: Float, h: Float) {
-        paint.style = Paint.Style.FILL
-        paint.color = cGrass
-        c.drawRect(0f, h * 0.94f, w, h, paint)
-        // Rolling hilltop bumps along the grass line.
-        paint.color = cGrassLight
-        for (i in 0 until 9) {
-            val bx = (i / 8f) * w
-            c.drawCircle(bx, h * 0.955f, h * 0.025f, paint)
-        }
+    /** Blit the baked scenery, rebuilding it if the surface size changed. */
+    private fun drawScenery(c: Canvas, w: Float, h: Float) {
+        val cached = sceneryBitmap
+        val bmp = if (cached == null || cached.width != w.toInt() || cached.height != h.toInt()) {
+            Bitmap.createBitmap(w.toInt(), h.toInt(), Bitmap.Config.ARGB_8888).also {
+                buildScenery(Canvas(it), w, h)
+                sceneryBitmap = it
+            }
+        } else cached
+        c.drawBitmap(bmp, 0f, 0f, null)
     }
 
-    /**
-     * The underside of the Truffula canopy along the top edge — tufty
-     * pom-poms on striped trunks that the fruit appears to drop out of.
-     */
-    private fun drawTruffulaCanopy(c: Canvas, w: Float, h: Float) {
-        // Four tufts, positioned to leave the corners (strike counters,
-        // menu button) and the top-center (score) free of overlap.
-        val tufts = floatArrayOf(0.16f, 0.38f, 0.62f, 0.84f)
+    private fun buildScenery(c: Canvas, w: Float, h: Float) {
         paint.style = Paint.Style.FILL
-        for (i in tufts.indices) {
-            val cx = tufts[i] * w
-            val color = fruitColors[i % 3]
-            val r = h * 0.065f
-            val tuftY = h * 0.035f + r * 0.45f
-
-            // Fluffy tuft hugging the top edge: a fat circle plus puffs.
-            paint.color = color
-            c.drawCircle(cx, tuftY, r, paint)
-            c.drawCircle(cx - r * 0.75f, tuftY - r * 0.3f, r * 0.65f, paint)
-            c.drawCircle(cx + r * 0.75f, tuftY - r * 0.3f, r * 0.65f, paint)
-            paint.color = withAlpha(Color.WHITE, 50)
-            c.drawCircle(cx - r * 0.3f, tuftY - r * 0.2f, r * 0.45f, paint)
+        // Distant rolling hills behind the grass line.
+        paint.color = cHillBack
+        c.drawOval(w * -0.20f, h * 0.885f, w * 0.64f, h * 1.085f, paint)
+        paint.color = cHillMid
+        c.drawOval(w * 0.30f, h * 0.875f, w * 1.26f, h * 1.115f, paint)
+        paint.color = cGrass
+        c.drawRect(0f, h * 0.94f, w, h, paint)
+        paint.color = cGrassLight
+        for (i in 0 until 9) {
+            c.drawCircle((i / 8f) * w, h * 0.955f, h * 0.025f, paint)
         }
+        // Two short, dimmed trees on the far hill for depth…
+        drawTree(c, w, h, w * 0.46f, h * 0.74f, h * 0.048f, w * 0.006f, cOrange, dim = true)
+        drawTree(c, w, h, w * 0.585f, h * 0.77f, h * 0.042f, -w * 0.005f, cPink, dim = true)
+        // …and four foreground trees framing the play space, positioned to
+        // leave the top-center (score/timer) and HUD rows clear.
+        drawTree(c, w, h, w * 0.06f, h * 0.15f, h * 0.082f, w * 0.012f, cPink, dim = false)
+        drawTree(c, w, h, w * 0.21f, h * 0.30f, h * 0.062f, -w * 0.012f, cYellow, dim = false)
+        drawTree(c, w, h, w * 0.79f, h * 0.28f, h * 0.062f, w * 0.012f, cOrange, dim = false)
+        drawTree(c, w, h, w * 0.94f, h * 0.14f, h * 0.082f, -w * 0.012f, cPink, dim = false)
+    }
+
+    /** One truffula tree: S-curved trunk with ring stripes, tuft on top. */
+    private fun drawTree(
+        c: Canvas, w: Float, h: Float,
+        baseX: Float, tuftY: Float, r: Float, lean: Float, color: Int, dim: Boolean
+    ) {
+        val baseY = h * 0.965f
+        val topX = baseX + lean
+        val topY = tuftY + r * 0.55f
+        val thick = r * 0.24f
+
+        val trunk = Path().apply {
+            moveTo(baseX, baseY)
+            cubicTo(
+                baseX - lean * 0.8f, baseY - (baseY - topY) * 0.38f,
+                topX + lean * 1.1f, topY + (baseY - topY) * 0.34f,
+                topX, topY
+            )
+        }
+        trunkPaint.pathEffect = null
+        trunkPaint.color = if (dim) shade(cCream, 0.72f) else cCream
+        trunkPaint.strokeWidth = thick
+        c.drawPath(trunk, trunkPaint)
+        // Ring stripes: a dashed re-stroke follows the same curve.
+        trunkPaint.pathEffect = DashPathEffect(floatArrayOf(thick * 0.55f, thick * 1.35f), thick)
+        trunkPaint.color = if (dim) shade(cTrunkBand, 0.72f) else cTrunkBand
+        trunkPaint.strokeWidth = thick * 0.78f
+        c.drawPath(trunk, trunkPaint)
+        trunkPaint.pathEffect = null
+
+        drawTuft(c, topX, tuftY, r, if (dim) shade(color, 0.72f) else color)
+    }
+
+    /** A fluffy tuft: shadow ball, ring of puffs, bright core, highlight. */
+    private fun drawTuft(c: Canvas, cx: Float, cy: Float, r: Float, color: Int) {
+        paint.style = Paint.Style.FILL
+        paint.color = shade(color, 0.72f)
+        c.drawCircle(cx + r * 0.05f, cy + r * 0.15f, r * 0.90f, paint)
+        paint.color = color
+        for (i in 0 until 7) {
+            val a = i / 7f * (2 * Math.PI).toFloat() + 0.35f
+            val pr = r * (0.42f + 0.09f * ((i * 5) % 3))
+            c.drawCircle(
+                cx + kotlin.math.cos(a) * r * 0.55f,
+                cy + sin(a) * r * 0.50f, pr, paint
+            )
+        }
+        c.drawCircle(cx, cy, r * 0.80f, paint)
+        paint.color = lighten(color, 0.28f)
+        c.drawCircle(cx - r * 0.26f, cy - r * 0.30f, r * 0.42f, paint)
+        paint.color = withAlpha(Color.WHITE, 77)
+        c.drawCircle(cx - r * 0.38f, cy - r * 0.44f, r * 0.18f, paint)
     }
 
     private fun withAlpha(color: Int, alpha: Int): Int =
@@ -608,9 +707,7 @@ class GameSurfaceView @JvmOverloads constructor(
 
     // ---------------- Game world ----------------
     private fun drawWorld(c: Canvas, w: Float, h: Float) {
-        drawGround(c, w, h)
         items.forEach { drawItem(c, w, h, it) }
-        drawTruffulaCanopy(c, w, h)
         drawBear(c, w, h)
         paint.style = Paint.Style.FILL
         particles.forEach { p ->
@@ -630,15 +727,19 @@ class GameSurfaceView @JvmOverloads constructor(
             // Truffula fruit: a fluffy pom-pom with a tiny stem.
             val color = fruitColors[item.kind]
             val bob = sin(item.sway + item.y * 9f) * r * 0.08f
-            paint.color = Color.parseColor("#F5E9C8")
+            paint.color = cCream
             c.drawRect(x - r * 0.06f, y - r * 1.1f, x + r * 0.06f, y - r * 0.4f, paint)
+            paint.color = shade(color, 0.72f)            // under-shadow for depth
+            c.drawCircle(x + bob + r * 0.06f, y + r * 0.14f, r * 0.82f, paint)
             paint.color = color
             c.drawCircle(x + bob, y, r * 0.85f, paint)
             c.drawCircle(x - r * 0.5f + bob, y - r * 0.25f, r * 0.5f, paint)
             c.drawCircle(x + r * 0.5f + bob, y - r * 0.25f, r * 0.5f, paint)
             c.drawCircle(x + bob, y - r * 0.45f, r * 0.55f, paint)
-            paint.color = withAlpha(Color.WHITE, 70)
-            c.drawCircle(x - r * 0.25f + bob, y - r * 0.3f, r * 0.3f, paint)
+            paint.color = lighten(color, 0.3f)
+            c.drawCircle(x - r * 0.3f + bob, y - r * 0.35f, r * 0.34f, paint)
+            paint.color = withAlpha(Color.WHITE, 90)
+            c.drawCircle(x - r * 0.38f + bob, y - r * 0.48f, r * 0.15f, paint)
         } else when (item.kind) {
             0 -> { // rock
                 paint.color = Color.GRAY
@@ -657,48 +758,68 @@ class GameSurfaceView @JvmOverloads constructor(
     private fun drawBear(c: Canvas, w: Float, h: Float) {
         val now = System.currentTimeMillis()
         val dizzy = now < bearDizzyUntil
-        val wobble = if (dizzy) sin(now / 40.0).toFloat() * 14f else 0f
+        val wobble = if (dizzy) sin(now / 40.0).toFloat() * 14f * (h / 800f) else 0f
 
         val cx = bearX * w + wobble
-        val cy = BEAR_Y * h
-        val rw = BEAR_HALF_W * w
-        val rh = BEAR_HALF_H * h
+        val gy = 0.95f * h                  // feet on the grass
+        val u = 0.24f * h                   // total bear height
+        val breathe = sin(now / 420.0).toFloat() * u * 0.012f   // gentle idle bounce
 
         paint.style = Paint.Style.FILL
-        // Round bear ears
+        // Feet
+        paint.color = cBearFurDark
+        ell(c, cx - u * 0.16f, gy - u * 0.03f, u * 0.115f, u * 0.06f)
+        ell(c, cx + u * 0.16f, gy - u * 0.03f, u * 0.115f, u * 0.06f)
+        // Arms, raised to catch (behind the body)
         paint.color = cBearFur
-        c.drawCircle(cx - rw * .65f, cy - rh * 1.0f, rh * .4f, paint)
-        c.drawCircle(cx + rw * .65f, cy - rh * 1.0f, rh * .4f, paint)
+        ell(c, cx - u * 0.33f, gy - u * 0.60f, u * 0.15f, u * 0.062f, -41f)
+        ell(c, cx + u * 0.33f, gy - u * 0.60f, u * 0.15f, u * 0.062f, 41f)
+        ell(c, cx - u * 0.42f, gy - u * 0.70f + breathe, u * 0.068f, u * 0.068f) // paws
+        ell(c, cx + u * 0.42f, gy - u * 0.70f + breathe, u * 0.068f, u * 0.068f)
+        // Body + tummy
+        ell(c, cx, gy - u * 0.32f, u * 0.30f, u * 0.34f)
         paint.color = cBearMuzzle
-        c.drawCircle(cx - rw * .65f, cy - rh * 1.0f, rh * .2f, paint)
-        c.drawCircle(cx + rw * .65f, cy - rh * 1.0f, rh * .2f, paint)
-        // Head/body — friendly brown Barbaloot
+        ell(c, cx, gy - u * 0.27f, u * 0.185f, u * 0.22f)
+        // Head with cheek fluff
         paint.color = cBearFur
-        c.drawRoundRect(RectF(cx - rw, cy - rh, cx + rw, cy + rh), rh * .8f, rh * .8f, paint)
-        // Fuzzy tummy/muzzle
+        ell(c, cx - u * 0.235f, gy - u * 0.66f + breathe, u * 0.085f, u * 0.085f)
+        ell(c, cx + u * 0.235f, gy - u * 0.66f + breathe, u * 0.085f, u * 0.085f)
+        c.drawCircle(cx, gy - u * 0.72f + breathe, u * 0.26f, paint)
+        // Ears
+        ell(c, cx - u * 0.17f, gy - u * 0.93f + breathe, u * 0.09f, u * 0.09f)
+        ell(c, cx + u * 0.17f, gy - u * 0.93f + breathe, u * 0.09f, u * 0.09f)
         paint.color = cBearMuzzle
-        c.drawRoundRect(RectF(cx - rw * .75f, cy - rh * .15f, cx + rw * .75f, cy + rh), rh * .6f, rh * .6f, paint)
-        // Open mouth (the "catcher")
+        ell(c, cx - u * 0.17f, gy - u * 0.93f + breathe, u * 0.045f, u * 0.045f)
+        ell(c, cx + u * 0.17f, gy - u * 0.93f + breathe, u * 0.045f, u * 0.045f)
+        // Muzzle, open mouth (the catcher), tongue, nose
+        ell(c, cx, gy - u * 0.63f + breathe, u * 0.15f, u * 0.115f)
         paint.color = cBearDark
-        c.drawArc(cx - rw * .55f, cy, cx + rw * .55f, cy + rh * .95f, 0f, 180f, true, paint)
-        // Little nose
+        ell(c, cx, gy - u * 0.60f + breathe, u * 0.092f, u * 0.072f)
+        paint.color = cTongue
+        ell(c, cx, gy - u * 0.567f + breathe, u * 0.052f, u * 0.032f)
         paint.color = cBearDark
-        c.drawCircle(cx, cy - rh * .05f, rh * .11f, paint)
+        ell(c, cx, gy - u * 0.688f + breathe, u * 0.048f, u * 0.032f)
         // Eyes — swirly when dizzy (classic mode only)
+        val ey = gy - u * 0.79f + breathe
         if (dizzy) {
             paint.style = Paint.Style.STROKE
-            paint.strokeWidth = 6f
+            paint.strokeWidth = u * 0.028f
             paint.color = Color.WHITE
-            c.drawCircle(cx - rw * .35f, cy - rh * .45f, rh * .22f, paint)
-            c.drawCircle(cx + rw * .35f, cy - rh * .45f, rh * .22f, paint)
+            c.drawCircle(cx - u * 0.105f, ey, u * 0.055f, paint)
+            c.drawCircle(cx + u * 0.105f, ey, u * 0.055f, paint)
+            c.drawArc(cx - u * 0.127f, ey - u * 0.022f, cx - u * 0.083f, ey + u * 0.022f, 0f, 260f, false, paint)
+            c.drawArc(cx + u * 0.083f, ey - u * 0.022f, cx + u * 0.127f, ey + u * 0.022f, 90f, 260f, false, paint)
             paint.style = Paint.Style.FILL
         } else {
             paint.color = Color.WHITE
-            c.drawCircle(cx - rw * .35f, cy - rh * .45f, rh * .26f, paint)
-            c.drawCircle(cx + rw * .35f, cy - rh * .45f, rh * .26f, paint)
-            paint.color = Color.BLACK
-            c.drawCircle(cx - rw * .35f, cy - rh * .42f, rh * .12f, paint)
-            c.drawCircle(cx + rw * .35f, cy - rh * .42f, rh * .12f, paint)
+            ell(c, cx - u * 0.105f, ey, u * 0.052f, u * 0.062f)
+            ell(c, cx + u * 0.105f, ey, u * 0.052f, u * 0.062f)
+            paint.color = Color.parseColor("#2B1B0E")
+            ell(c, cx - u * 0.096f, ey + u * 0.012f, u * 0.028f, u * 0.032f)
+            ell(c, cx + u * 0.096f, ey + u * 0.012f, u * 0.028f, u * 0.032f)
+            paint.color = Color.WHITE
+            c.drawCircle(cx - u * 0.088f, ey, u * 0.010f, paint)
+            c.drawCircle(cx + u * 0.104f, ey, u * 0.010f, paint)
         }
     }
 
@@ -749,12 +870,12 @@ class GameSurfaceView @JvmOverloads constructor(
             textPaint.textSize = h * 0.04f
             textPaint.textAlign = Paint.Align.LEFT
             textPaint.color = Color.WHITE
-            c.drawText("Rocks: ", w * 0.05f, indicatorY, textPaint)
+            c.drawText("Rocks: ", w * 0.14f, indicatorY, textPaint)
             val badText = (1..3).joinToString(" ") { i ->
                 if (i <= badItemsEaten) "💥" else "⚪"
             }
             textPaint.color = cRed
-            c.drawText(badText, w * 0.05f + textPaint.measureText("Rocks: "), indicatorY, textPaint)
+            c.drawText(badText, w * 0.14f + textPaint.measureText("Rocks: "), indicatorY, textPaint)
 
             textPaint.textAlign = Paint.Align.RIGHT
             textPaint.color = Color.WHITE
@@ -762,9 +883,9 @@ class GameSurfaceView @JvmOverloads constructor(
                 if (i <= fruitsDropped) "❌" else "🍒"
             }
             val label = "Dropped: "
-            c.drawText(fruitsText, w * 0.95f, indicatorY, textPaint)
+            c.drawText(fruitsText, w * 0.86f, indicatorY, textPaint)
             textPaint.color = cLime
-            c.drawText(label, w * 0.95f - textPaint.measureText(fruitsText) - 10f, indicatorY, textPaint)
+            c.drawText(label, w * 0.86f - textPaint.measureText(fruitsText) - 10f, indicatorY, textPaint)
         }
 
         textPaint.textAlign = originalAlign
@@ -813,54 +934,70 @@ class GameSurfaceView @JvmOverloads constructor(
     private fun drawLorax(
         c: Canvas, w: Float, h: Float, cx: Float, rise: Float, bubble: String, scale: Float = 1f
     ) {
-        val bodyH = h * 0.24f * scale
-        val bodyW = bodyH * 0.62f
+        val bodyB = h * 0.24f * scale
+        val bodyW = bodyB * 0.62f
         // Feet start below the screen edge and rise to stand on the grass.
-        val baseY = h * 1.02f - (h * 0.06f + bodyH) * rise
-        val cOrange2 = Color.parseColor("#F28C28")
-        val cMustache = Color.parseColor("#FFD34D")
+        val baseY = h * 1.02f - (h * 0.06f + bodyB) * rise
 
         paint.style = Paint.Style.FILL
-
-        // Arms raised in a cheer
-        paint.color = cOrange2
-        c.drawCircle(cx - bodyW * 0.62f, baseY - bodyH * 0.72f, bodyW * 0.16f, paint)
-        c.drawCircle(cx + bodyW * 0.62f, baseY - bodyH * 0.72f, bodyW * 0.16f, paint)
-
-        // Egg-shaped furry body
-        c.drawOval(RectF(cx - bodyW / 2f, baseY - bodyH, cx + bodyW / 2f, baseY), paint)
-
+        // Feet
+        paint.color = shade(cLoraxOrange, 0.82f)
+        ell(c, cx - bodyW * 0.24f, baseY - bodyB * 0.02f, bodyW * 0.17f, bodyB * 0.045f)
+        ell(c, cx + bodyW * 0.24f, baseY - bodyB * 0.02f, bodyW * 0.17f, bodyB * 0.045f)
+        // Arms raised in a cheer, with mitts
+        paint.color = cLoraxOrange
+        ell(c, cx - bodyW * 0.55f, baseY - bodyB * 0.66f, bodyB * 0.115f, bodyB * 0.05f, -46f)
+        ell(c, cx + bodyW * 0.55f, baseY - bodyB * 0.66f, bodyB * 0.115f, bodyB * 0.05f, 46f)
+        ell(c, cx - bodyW * 0.68f, baseY - bodyB * 0.76f, bodyB * 0.052f, bodyB * 0.052f)
+        ell(c, cx + bodyW * 0.68f, baseY - bodyB * 0.76f, bodyB * 0.052f, bodyB * 0.052f)
+        // Egg body with side fur puffs
+        ell(c, cx - bodyW * 0.46f, baseY - bodyB * 0.36f, bodyW * 0.10f, bodyW * 0.10f)
+        ell(c, cx + bodyW * 0.46f, baseY - bodyB * 0.36f, bodyW * 0.10f, bodyW * 0.10f)
+        ell(c, cx - bodyW * 0.40f, baseY - bodyB * 0.18f, bodyW * 0.10f, bodyW * 0.10f)
+        ell(c, cx + bodyW * 0.40f, baseY - bodyB * 0.18f, bodyW * 0.10f, bodyW * 0.10f)
+        ell(c, cx, baseY - bodyB * 0.48f, bodyW * 0.50f, bodyB * 0.50f)
         // Face patch
-        paint.color = Color.parseColor("#FFC98B")
-        c.drawOval(
-            RectF(cx - bodyW * 0.32f, baseY - bodyH * 0.92f, cx + bodyW * 0.32f, baseY - bodyH * 0.5f),
-            paint
-        )
-
-        // Eyes
+        paint.color = cLoraxFace
+        ell(c, cx, baseY - bodyB * 0.72f, bodyW * 0.36f, bodyB * 0.195f)
+        // Eyes with highlights
+        val ey = baseY - bodyB * 0.765f
         paint.color = Color.WHITE
-        c.drawCircle(cx - bodyW * 0.15f, baseY - bodyH * 0.78f, bodyW * 0.09f, paint)
-        c.drawCircle(cx + bodyW * 0.15f, baseY - bodyH * 0.78f, bodyW * 0.09f, paint)
-        paint.color = Color.BLACK
-        c.drawCircle(cx - bodyW * 0.15f, baseY - bodyH * 0.77f, bodyW * 0.04f, paint)
-        c.drawCircle(cx + bodyW * 0.15f, baseY - bodyH * 0.77f, bodyW * 0.04f, paint)
-
-        // Bushy yellow eyebrows
+        ell(c, cx - bodyW * 0.16f, ey, bodyW * 0.10f, bodyW * 0.115f)
+        ell(c, cx + bodyW * 0.16f, ey, bodyW * 0.10f, bodyW * 0.115f)
+        paint.color = Color.parseColor("#2B1B0E")
+        ell(c, cx - bodyW * 0.15f, ey + bodyW * 0.02f, bodyW * 0.048f, bodyW * 0.055f)
+        ell(c, cx + bodyW * 0.15f, ey + bodyW * 0.02f, bodyW * 0.048f, bodyW * 0.055f)
+        paint.color = Color.WHITE
+        c.drawCircle(cx - bodyW * 0.135f, ey, bodyW * 0.018f, paint)
+        c.drawCircle(cx + bodyW * 0.165f, ey, bodyW * 0.018f, paint)
+        // Bushy brows — thick, angled up and out
         paint.color = cMustache
         paint.style = Paint.Style.STROKE
-        paint.strokeWidth = bodyW * 0.09f
         paint.strokeCap = Paint.Cap.ROUND
-        c.drawLine(cx - bodyW * 0.28f, baseY - bodyH * 0.88f, cx - bodyW * 0.05f, baseY - bodyH * 0.9f, paint)
-        c.drawLine(cx + bodyW * 0.05f, baseY - bodyH * 0.9f, cx + bodyW * 0.28f, baseY - bodyH * 0.88f, paint)
-
-        // THE mustache: two thick droopy arcs under the nose — his defining
-        // feature, so it gets to be a little oversized.
-        paint.strokeWidth = bodyW * 0.22f
-        val my = baseY - bodyH * 0.6f
-        c.drawArc(cx - bodyW * 0.64f, my - bodyW * 0.12f, cx + bodyW * 0.04f, my + bodyW * 0.52f, 200f, 120f, false, paint)
-        c.drawArc(cx - bodyW * 0.04f, my - bodyW * 0.12f, cx + bodyW * 0.64f, my + bodyW * 0.52f, 220f, 120f, false, paint)
+        paint.strokeWidth = bodyW * 0.145f
+        c.drawLine(cx - bodyW * 0.335f, baseY - bodyB * 0.845f, cx - bodyW * 0.06f, baseY - bodyB * 0.875f, paint)
+        c.drawLine(cx + bodyW * 0.06f, baseY - bodyB * 0.875f, cx + bodyW * 0.335f, baseY - bodyB * 0.845f, paint)
         paint.strokeCap = Paint.Cap.BUTT
         paint.style = Paint.Style.FILL
+        // Nose
+        paint.color = cLoraxNose
+        ell(c, cx, baseY - bodyB * 0.665f, bodyW * 0.075f, bodyW * 0.055f)
+        // THE mustache — one sculpted filled shape, drooping past the body
+        val ny = baseY - bodyB * 0.66f
+        paint.color = cMustache
+        val stache = Path().apply {
+            moveTo(cx, ny + bodyB * 0.035f)
+            cubicTo(cx - bodyW * 0.30f, ny - bodyB * 0.055f, cx - bodyW * 0.56f, ny - bodyB * 0.005f, cx - bodyW * 0.62f, ny + bodyB * 0.13f)
+            cubicTo(cx - bodyW * 0.655f, ny + bodyB * 0.225f, cx - bodyW * 0.615f, ny + bodyB * 0.29f, cx - bodyW * 0.52f, ny + bodyB * 0.285f)
+            cubicTo(cx - bodyW * 0.38f, ny + bodyB * 0.275f, cx - bodyW * 0.20f, ny + bodyB * 0.195f, cx - bodyW * 0.075f, ny + bodyB * 0.155f)
+            quadTo(cx - bodyW * 0.02f, ny + bodyB * 0.14f, cx, ny + bodyB * 0.145f)
+            quadTo(cx + bodyW * 0.02f, ny + bodyB * 0.14f, cx + bodyW * 0.075f, ny + bodyB * 0.155f)
+            cubicTo(cx + bodyW * 0.20f, ny + bodyB * 0.195f, cx + bodyW * 0.38f, ny + bodyB * 0.275f, cx + bodyW * 0.52f, ny + bodyB * 0.285f)
+            cubicTo(cx + bodyW * 0.615f, ny + bodyB * 0.29f, cx + bodyW * 0.655f, ny + bodyB * 0.225f, cx + bodyW * 0.62f, ny + bodyB * 0.13f)
+            cubicTo(cx + bodyW * 0.56f, ny - bodyB * 0.005f, cx + bodyW * 0.30f, ny - bodyB * 0.055f, cx, ny + bodyB * 0.035f)
+            close()
+        }
+        c.drawPath(stache, paint)
 
         // Speech bubble, fully visible only once he's up
         if (rise > 0.85f && bubble.isNotEmpty()) {
@@ -868,7 +1005,7 @@ class GameSurfaceView @JvmOverloads constructor(
             textPaint.textSize = h * 0.045f
             val tw = textPaint.measureText(bubble)
             val bx = cx + bodyW * 0.9f
-            val by = baseY - bodyH * 1.18f
+            val by = baseY - bodyB * 1.18f
             val pad = h * 0.02f
             paint.color = Color.WHITE
             val rect = RectF(bx - tw / 2f - pad, by - h * 0.045f - pad, bx + tw / 2f + pad, by + pad)
@@ -876,7 +1013,7 @@ class GameSurfaceView @JvmOverloads constructor(
             val tail = Path()
             tail.moveTo(bx - tw * 0.3f, by + pad * 0.8f)
             tail.lineTo(bx - tw * 0.1f, by + pad * 0.8f)
-            tail.lineTo(cx + bodyW * 0.4f, baseY - bodyH * 0.95f)
+            tail.lineTo(cx + bodyW * 0.4f, baseY - bodyB * 0.95f)
             tail.close()
             c.drawPath(tail, paint)
             textPaint.color = cSkyTop
