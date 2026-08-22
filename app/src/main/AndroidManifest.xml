@@ -17,7 +17,7 @@
         android:roundIcon="@mipmap/ic_launcher_round"
         android:label="@string/app_name"
         android:supportsRtl="true"
-        android:theme="@style/Theme.HippoMuncher">
+        android:theme="@style/Theme.Barbafruit">
 
         <activity
             android:name=".MainActivity"

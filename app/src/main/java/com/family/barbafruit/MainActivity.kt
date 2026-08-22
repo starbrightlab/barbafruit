@@ -1,4 +1,4 @@
-package com.family.hippomuncher
+package com.family.barbafruit
 
 import android.Manifest
 import android.content.pm.PackageManager
@@ -30,16 +30,23 @@ class MainActivity : AppCompatActivity() {
     private lateinit var pipPreview: PreviewView
     private lateinit var permissionOverlay: LinearLayout
 
+    private lateinit var btnModeFrenzy: Button
+    private lateinit var btnModeClassic: Button
+    private lateinit var btnTime30: Button
+    private lateinit var btnTime60: Button
+    private lateinit var btnTime120: Button
+    private lateinit var btnTimeEndless: Button
     private lateinit var btnEasy: Button
     private lateinit var btnMedium: Button
     private lateinit var btnHard: Button
+    private lateinit var timerSection: LinearLayout
 
     private lateinit var cameraExecutor: ExecutorService
     private var analyzer: FaceTrackerAnalyzer? = null
     private var cameraProvider: ProcessCameraProvider? = null
     private var cameraStarted = false
 
-    private val prefs by lazy { getSharedPreferences("hippo", MODE_PRIVATE) }
+    private val prefs by lazy { getSharedPreferences("barbafruit", MODE_PRIVATE) }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -55,29 +62,42 @@ class MainActivity : AppCompatActivity() {
         pipPreview = findViewById(R.id.pipPreview)
         permissionOverlay = findViewById(R.id.permissionOverlay)
 
+        btnModeFrenzy = findViewById(R.id.btnModeFrenzy)
+        btnModeClassic = findViewById(R.id.btnModeClassic)
+        btnTime30 = findViewById(R.id.btnTime30)
+        btnTime60 = findViewById(R.id.btnTime60)
+        btnTime120 = findViewById(R.id.btnTime120)
+        btnTimeEndless = findViewById(R.id.btnTimeEndless)
         btnEasy = findViewById(R.id.btnEasy)
         btnMedium = findViewById(R.id.btnMedium)
         btnHard = findViewById(R.id.btnHard)
+        timerSection = findViewById(R.id.timerSection)
 
         cameraExecutor = Executors.newSingleThreadExecutor()
 
-        // ---- High score persistence per difficulty ----
-        val savedDiffStr = prefs.getString("difficulty", GameSurfaceView.Difficulty.MEDIUM.name) ?: GameSurfaceView.Difficulty.MEDIUM.name
-        val initialDiff = try {
-            GameSurfaceView.Difficulty.valueOf(savedDiffStr)
-        } catch (e: Exception) {
-            GameSurfaceView.Difficulty.MEDIUM
-        }
+        // ---- Restore saved settings ----
+        val initialMode = readEnumPref("mode", GameSurfaceView.GameMode.FRUIT_FRENZY)
+        val initialDiff = readEnumPref("difficulty", GameSurfaceView.Difficulty.MEDIUM)
+        val initialSeconds = prefs.getInt("round_seconds", 60)
 
+        btnModeFrenzy.setOnClickListener { updateMode(GameSurfaceView.GameMode.FRUIT_FRENZY) }
+        btnModeClassic.setOnClickListener { updateMode(GameSurfaceView.GameMode.CLASSIC) }
+        btnTime30.setOnClickListener { updateRoundSeconds(30) }
+        btnTime60.setOnClickListener { updateRoundSeconds(60) }
+        btnTime120.setOnClickListener { updateRoundSeconds(120) }
+        btnTimeEndless.setOnClickListener { updateRoundSeconds(0) }   // 0 = endless
         btnEasy.setOnClickListener { updateDifficulty(GameSurfaceView.Difficulty.EASY) }
         btnMedium.setOnClickListener { updateDifficulty(GameSurfaceView.Difficulty.MEDIUM) }
         btnHard.setOnClickListener { updateDifficulty(GameSurfaceView.Difficulty.HARD) }
 
-        updateDifficulty(initialDiff)
+        gameView.roundSeconds = initialSeconds
+        gameView.difficulty = initialDiff
+        gameView.gameMode = initialMode
+        refreshSettingButtons()
+        loadHighScore()
 
         gameView.onNewHighScore = { hs ->
-            val key = getHighScoreKey(gameView.difficulty)
-            prefs.edit().putInt(key, hs).apply()
+            prefs.edit().putInt(getHighScoreKey(), hs).apply()
         }
 
         wireDrawer()
@@ -85,6 +105,11 @@ class MainActivity : AppCompatActivity() {
         findViewById<Button>(R.id.btnGrantCamera).setOnClickListener {
             requestPermissions(arrayOf(Manifest.permission.CAMERA), REQ_CAMERA)
         }
+    }
+
+    private inline fun <reified T : Enum<T>> readEnumPref(key: String, default: T): T {
+        val saved = prefs.getString(key, default.name) ?: default.name
+        return try { enumValueOf<T>(saved) } catch (e: Exception) { default }
     }
 
     // ======================== Drawer & menu ========================
@@ -110,8 +135,7 @@ class MainActivity : AppCompatActivity() {
         }
         findViewById<Button>(R.id.btnResetScore).setOnClickListener {
             gameView.resetHighScore()
-            val key = getHighScoreKey(gameView.difficulty)
-            prefs.edit().putInt(key, 0).apply()
+            prefs.edit().putInt(getHighScoreKey(), 0).apply()
             drawer.closeDrawer(GravityCompat.START)
         }
         findViewById<Button>(R.id.btnQuit).setOnClickListener {
@@ -119,33 +143,79 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
-    private fun getHighScoreKey(diff: GameSurfaceView.Difficulty): String = when (diff) {
-        GameSurfaceView.Difficulty.EASY -> "high_score_easy"
-        GameSurfaceView.Difficulty.MEDIUM -> "high_score_medium"
-        GameSurfaceView.Difficulty.HARD -> "high_score_hard"
+    // ======================== Settings ========================
+
+    /**
+     * High scores are tracked per game configuration: a 30-second frenzy
+     * score and a 2-minute frenzy score aren't comparable, and classic
+     * scores live in their own world entirely.
+     */
+    private fun getHighScoreKey(): String = when (gameView.gameMode) {
+        GameSurfaceView.GameMode.FRUIT_FRENZY -> {
+            val len = if (gameView.roundSeconds > 0) "${gameView.roundSeconds}" else "endless"
+            "hs_frenzy_${len}_${gameView.difficulty.name.lowercase()}"
+        }
+        GameSurfaceView.GameMode.CLASSIC ->
+            "hs_classic_${gameView.difficulty.name.lowercase()}"
+    }
+
+    private fun loadHighScore() {
+        gameView.highScore = prefs.getInt(getHighScoreKey(), 0)
+    }
+
+    private fun updateMode(mode: GameSurfaceView.GameMode) {
+        gameView.gameMode = mode
+        prefs.edit().putString("mode", mode.name).apply()
+        refreshSettingButtons()
+        loadHighScore()
+    }
+
+    private fun updateRoundSeconds(seconds: Int) {
+        gameView.roundSeconds = seconds
+        prefs.edit().putInt("round_seconds", seconds).apply()
+        refreshSettingButtons()
+        loadHighScore()
     }
 
     private fun updateDifficulty(diff: GameSurfaceView.Difficulty) {
         gameView.difficulty = diff
         prefs.edit().putString("difficulty", diff.name).apply()
+        refreshSettingButtons()
+        loadHighScore()
+    }
 
-        val lime = ContextCompat.getColor(this, R.color.neon_lime)
-        val cyan = ContextCompat.getColor(this, R.color.neon_cyan)
-        val red = ContextCompat.getColor(this, R.color.neon_red)
+    private fun refreshSettingButtons() {
+        val pink = ContextCompat.getColor(this, R.color.truffula_pink)
+        val orange = ContextCompat.getColor(this, R.color.truffula_orange)
+        val yellow = ContextCompat.getColor(this, R.color.truffula_yellow)
+        val lime = ContextCompat.getColor(this, R.color.leaf_lime)
+        val cyan = ContextCompat.getColor(this, R.color.sky_cyan)
+        val red = ContextCompat.getColor(this, R.color.berry_red)
+
+        val mode = gameView.gameMode
+        tintToggle(btnModeFrenzy, pink, mode == GameSurfaceView.GameMode.FRUIT_FRENZY)
+        tintToggle(btnModeClassic, cyan, mode == GameSurfaceView.GameMode.CLASSIC)
+
+        // The timer only matters in Fruit Frenzy — hide it in Classic so the
+        // menu doesn't suggest a setting that has no effect.
+        timerSection.visibility =
+            if (mode == GameSurfaceView.GameMode.FRUIT_FRENZY) View.VISIBLE else View.GONE
+        val secs = gameView.roundSeconds
+        tintToggle(btnTime30, yellow, secs == 30)
+        tintToggle(btnTime60, yellow, secs == 60)
+        tintToggle(btnTime120, yellow, secs == 120)
+        tintToggle(btnTimeEndless, yellow, secs == 0)
+
+        val diff = gameView.difficulty
+        tintToggle(btnEasy, lime, diff == GameSurfaceView.Difficulty.EASY)
+        tintToggle(btnMedium, orange, diff == GameSurfaceView.Difficulty.MEDIUM)
+        tintToggle(btnHard, red, diff == GameSurfaceView.Difficulty.HARD)
+    }
+
+    private fun tintToggle(btn: Button, activeColor: Int, selected: Boolean) {
         val dim = Color.parseColor("#44FFFFFF")
-
-        btnEasy.backgroundTintList = ColorStateList.valueOf(if (diff == GameSurfaceView.Difficulty.EASY) lime else dim)
-        btnEasy.setTextColor(if (diff == GameSurfaceView.Difficulty.EASY) Color.parseColor("#14122B") else Color.WHITE)
-
-        btnMedium.backgroundTintList = ColorStateList.valueOf(if (diff == GameSurfaceView.Difficulty.MEDIUM) cyan else dim)
-        btnMedium.setTextColor(if (diff == GameSurfaceView.Difficulty.MEDIUM) Color.parseColor("#14122B") else Color.WHITE)
-
-        btnHard.backgroundTintList = ColorStateList.valueOf(if (diff == GameSurfaceView.Difficulty.HARD) red else dim)
-        btnHard.setTextColor(if (diff == GameSurfaceView.Difficulty.HARD) Color.parseColor("#14122B") else Color.WHITE)
-
-        // Load the high score for this difficulty
-        val key = getHighScoreKey(diff)
-        gameView.highScore = prefs.getInt(key, 0)
+        btn.backgroundTintList = ColorStateList.valueOf(if (selected) activeColor else dim)
+        btn.setTextColor(if (selected) Color.parseColor("#2C1E5E") else Color.WHITE)
     }
 
     // ======================== Permissions ========================
@@ -234,6 +304,5 @@ class MainActivity : AppCompatActivity() {
 
     private companion object {
         const val REQ_CAMERA = 1001
-        const val KEY_HIGH_SCORE = "high_score"
     }
 }
