@@ -126,6 +126,14 @@ class GameSurfaceView @JvmOverloads constructor(
     private var lastTimerTick = -1
     private var lastConfettiMs = 0L
 
+    // Bear character-rig state. Velocity is derived on the render thread
+    // from frame-to-frame position; the catch timestamp drives the chomp,
+    // squash, and ear-wiggle reactions.
+    private var bearCatchMs = 0L
+    private var bearLastDrawMs = 0L
+    private var bearLastDrawX = 0.5f
+    private var bearVelSm = 0f
+
     // Milestone cheer (FRUIT_FRENZY): every 10th fruit the Lorax pops up.
     private var milestoneUntilMs = 0L
     private var milestoneText = ""
@@ -431,6 +439,7 @@ class GameSurfaceView @JvmOverloads constructor(
         eaten.forEach { item ->
             if (item.good) {
                 score++
+                bearCatchMs = now
                 if (score > highScore) { highScore = score; onNewHighScore?.invoke(highScore) }
                 sound.eatFruit()
                 burst(item.x, item.y, fruitColors[item.kind])
@@ -755,72 +764,238 @@ class GameSurfaceView @JvmOverloads constructor(
         }
     }
 
+    private enum class Mouth { OPEN, WIDE, SMILE, CHOMP, DIZZY }
+
+    /**
+     * The Barbaloot character rig. Local coordinate space: origin at the
+     * feet, y negative = up, unit u = bear height. Cel shading via the
+     * two-tone offset trick (dark shape, light shape nudged up-left).
+     * All motion is driven by gameplay: eyes track the nearest fruit, the
+     * mouth opens wide when one is about to land, every catch triggers a
+     * squash + chomp + ear-wiggle, and running adds a lean and waddle.
+     */
     private fun drawBear(c: Canvas, w: Float, h: Float) {
         val now = System.currentTimeMillis()
-        val dizzy = now < bearDizzyUntil
-        val wobble = if (dizzy) sin(now / 40.0).toFloat() * 14f * (h / 800f) else 0f
+        val u = 0.24f * h
+        val gy = 0.95f * h
 
-        val cx = bearX * w + wobble
-        val gy = 0.95f * h                  // feet on the grass
-        val u = 0.24f * h                   // total bear height
-        val breathe = sin(now / 420.0).toFloat() * u * 0.012f   // gentle idle bounce
+        // ---- Derive velocity from render positions (render thread only) ----
+        val dtDraw = (now - bearLastDrawMs).coerceIn(1, 100) / 1000f
+        bearVelSm += ((bearX - bearLastDrawX) / dtDraw - bearVelSm) * 0.25f
+        bearLastDrawMs = now
+        bearLastDrawX = bearX
+
+        // ---- Face targeting: nearest falling fruit steers eyes and mouth ----
+        var lookX = 0f; var lookY = 0f; var fruitNear = false
+        var bestD = Float.MAX_VALUE
+        for (it in items) {
+            if (!it.good) continue
+            val dx = it.x - bearX
+            val dy = it.y - 0.78f
+            val d = dx * dx + dy * dy
+            if (d < bestD) {
+                bestD = d
+                lookX = (dx * 6f).coerceIn(-1f, 1f)
+                lookY = (dy * 3f).coerceIn(-1f, 1f)
+                fruitNear = abs(dx) < 0.14f && it.y > 0.5f && it.y < 0.86f
+            }
+        }
+
+        val dizzy = now < bearDizzyUntil
+        val catchAge = now - bearCatchMs
+        val mouth = when {
+            dizzy -> Mouth.DIZZY
+            state == State.TIME_UP -> Mouth.SMILE
+            catchAge < 220 -> Mouth.CHOMP
+            fruitNear -> Mouth.WIDE
+            else -> Mouth.OPEN
+        }
+
+        val vel = bearVelSm
+        val lean = (vel * 20f).coerceIn(-9f, 9f)
+        val move = (abs(vel) * 2.2f).coerceAtMost(1f)
+        val wob = if (dizzy) sin(now / 40.0).toFloat() * 0.05f * u else 0f
+        val breathe = sin(now / 420.0).toFloat() * u * 0.012f
+        val waddle = sin(now / 85.0).toFloat() * move
+        val bob = abs(sin(now / 85.0)).toFloat() * move * 0.02f * u
+        val sq = if (catchAge < 160) 1f - 0.07f * (1f - catchAge / 160f) else 1f
+        val earJig = if (catchAge < 260) sin(catchAge / 24.0).toFloat() * 0.014f * u else 0f
+        val blink = !dizzy && mouth != Mouth.WIDE && ((now + 700) % 3600) < 130
+        val furShade = shade(cBearFur, 0.78f)
 
         paint.style = Paint.Style.FILL
-        // Feet
+        // Contact shadow stays on the ground, widening slightly with the squash.
+        paint.color = Color.argb(56, 0, 0, 0)
+        ell(c, bearX * w + wob, gy + 0.012f * u, 0.33f * u * (2f - sq), 0.05f * u)
+
+        c.save()
+        c.translate(bearX * w + wob, gy - bob)
+        c.rotate(lean)
+        c.scale(1f + (1f - sq) * 0.9f, sq)
+
+        // ---- Feet (alternate lift while waddling) ----
         paint.color = cBearFurDark
-        ell(c, cx - u * 0.16f, gy - u * 0.03f, u * 0.115f, u * 0.06f)
-        ell(c, cx + u * 0.16f, gy - u * 0.03f, u * 0.115f, u * 0.06f)
-        // Arms, raised to catch (behind the body)
+        ell(c, -0.16f * u, -0.03f * u - waddle.coerceAtLeast(0f) * 0.035f * u, 0.115f * u, 0.062f * u)
+        ell(c, 0.16f * u, -0.03f * u - (-waddle).coerceAtLeast(0f) * 0.035f * u, 0.115f * u, 0.062f * u)
+
+        // ---- Arms raised to catch, paws bobbing with the breath ----
         paint.color = cBearFur
-        ell(c, cx - u * 0.33f, gy - u * 0.60f, u * 0.15f, u * 0.062f, -41f)
-        ell(c, cx + u * 0.33f, gy - u * 0.60f, u * 0.15f, u * 0.062f, 41f)
-        ell(c, cx - u * 0.42f, gy - u * 0.70f + breathe, u * 0.068f, u * 0.068f) // paws
-        ell(c, cx + u * 0.42f, gy - u * 0.70f + breathe, u * 0.068f, u * 0.068f)
-        // Body + tummy
-        ell(c, cx, gy - u * 0.32f, u * 0.30f, u * 0.34f)
-        paint.color = cBearMuzzle
-        ell(c, cx, gy - u * 0.27f, u * 0.185f, u * 0.22f)
-        // Head with cheek fluff
+        ell(c, -0.33f * u, -0.60f * u, 0.15f * u, 0.062f * u, -41f)
+        ell(c, 0.33f * u, -0.60f * u, 0.15f * u, 0.062f * u, 41f)
+        ell(c, -0.42f * u, -0.70f * u + breathe, 0.068f * u, 0.068f * u)
+        ell(c, 0.42f * u, -0.70f * u + breathe, 0.068f * u, 0.068f * u)
+
+        // ---- Body: pear silhouette, cel-shaded ----
+        paint.color = furShade
+        ell(c, 0.018f * u, -0.305f * u, 0.305f * u, 0.335f * u)
+        ell(c, 0.018f * u, -0.185f * u, 0.325f * u, 0.185f * u)
         paint.color = cBearFur
-        ell(c, cx - u * 0.235f, gy - u * 0.66f + breathe, u * 0.085f, u * 0.085f)
-        ell(c, cx + u * 0.235f, gy - u * 0.66f + breathe, u * 0.085f, u * 0.085f)
-        c.drawCircle(cx, gy - u * 0.72f + breathe, u * 0.26f, paint)
-        // Ears
-        ell(c, cx - u * 0.17f, gy - u * 0.93f + breathe, u * 0.09f, u * 0.09f)
-        ell(c, cx + u * 0.17f, gy - u * 0.93f + breathe, u * 0.09f, u * 0.09f)
+        ell(c, -0.008f * u, -0.33f * u, 0.295f * u, 0.33f * u)
+        ell(c, -0.008f * u, -0.20f * u, 0.315f * u, 0.18f * u)
+        // Belly
         paint.color = cBearMuzzle
-        ell(c, cx - u * 0.17f, gy - u * 0.93f + breathe, u * 0.045f, u * 0.045f)
-        ell(c, cx + u * 0.17f, gy - u * 0.93f + breathe, u * 0.045f, u * 0.045f)
-        // Muzzle, open mouth (the catcher), tongue, nose
-        ell(c, cx, gy - u * 0.63f + breathe, u * 0.15f, u * 0.115f)
+        ell(c, 0f, -0.255f * u, 0.185f * u, 0.215f * u)
+
+        // ---- Head group ----
+        val hy = -0.72f * u + breathe
+        // Cheek fluff
+        paint.color = cBearFur
+        ell(c, -0.245f * u, hy + 0.075f * u, 0.075f * u, 0.075f * u)
+        ell(c, 0.245f * u, hy + 0.075f * u, 0.075f * u, 0.075f * u)
+        // Ears (shade, light, inner) with a wiggle after each catch
+        paint.color = furShade
+        ell(c, -0.175f * u, hy - 0.21f * u + earJig, 0.092f * u, 0.092f * u)
+        ell(c, 0.175f * u, hy - 0.21f * u - earJig, 0.092f * u, 0.092f * u)
+        paint.color = cBearFur
+        ell(c, -0.181f * u, hy - 0.216f * u + earJig, 0.086f * u, 0.086f * u)
+        ell(c, 0.169f * u, hy - 0.216f * u - earJig, 0.086f * u, 0.086f * u)
+        paint.color = cBearMuzzle
+        ell(c, -0.175f * u, hy - 0.205f * u + earJig, 0.046f * u, 0.046f * u)
+        ell(c, 0.175f * u, hy - 0.205f * u - earJig, 0.046f * u, 0.046f * u)
+        // Head, cel-shaded
+        paint.color = furShade
+        ell(c, 0.015f * u, hy + 0.015f * u, 0.262f * u, 0.262f * u)
+        paint.color = cBearFur
+        ell(c, -0.008f * u, hy - 0.008f * u, 0.258f * u, 0.258f * u)
+        // Muzzle
+        paint.color = cBearMuzzle
+        ell(c, 0f, hy + 0.095f * u, 0.155f * u, 0.118f * u)
+        // Nose: soft triangle + highlight, philtrum line down to the mouth
         paint.color = cBearDark
-        ell(c, cx, gy - u * 0.60f + breathe, u * 0.092f, u * 0.072f)
-        paint.color = cTongue
-        ell(c, cx, gy - u * 0.567f + breathe, u * 0.052f, u * 0.032f)
+        val nose = Path().apply {
+            moveTo(-0.048f * u, hy + 0.022f * u)
+            quadTo(0f, hy - 0.006f * u, 0.048f * u, hy + 0.022f * u)
+            quadTo(0.052f * u, hy + 0.052f * u, 0f, hy + 0.072f * u)
+            quadTo(-0.052f * u, hy + 0.052f * u, -0.048f * u, hy + 0.022f * u)
+            close()
+        }
+        c.drawPath(nose, paint)
+        paint.color = withAlpha(Color.WHITE, 115)
+        ell(c, -0.016f * u, hy + 0.026f * u, 0.012f * u, 0.008f * u)
         paint.color = cBearDark
-        ell(c, cx, gy - u * 0.688f + breathe, u * 0.048f, u * 0.032f)
-        // Eyes — swirly when dizzy (classic mode only)
-        val ey = gy - u * 0.79f + breathe
+        paint.style = Paint.Style.STROKE
+        paint.strokeWidth = 0.009f * u
+        paint.strokeCap = Paint.Cap.ROUND
+        c.drawLine(0f, hy + 0.072f * u, 0f, hy + 0.105f * u, paint)
+        paint.style = Paint.Style.FILL
+
+        // ---- Mouth states ----
+        val my = hy + 0.145f * u
+        when (mouth) {
+            Mouth.OPEN, Mouth.WIDE -> {
+                // Happy open "D" mouth: raised corners, round bottom.
+                val open = if (mouth == Mouth.WIDE) 1.3f else 1f
+                paint.color = cBearDark
+                val m = Path().apply {
+                    moveTo(-0.092f * u * open, my - 0.032f * u)
+                    quadTo(0f, my - 0.006f * u, 0.092f * u * open, my - 0.032f * u)
+                    quadTo(0.102f * u * open, my + 0.05f * u * open, 0f, my + 0.078f * u * open)
+                    quadTo(-0.102f * u * open, my + 0.05f * u * open, -0.092f * u * open, my - 0.032f * u)
+                    close()
+                }
+                c.drawPath(m, paint)
+                paint.color = cTongue
+                ell(c, 0f, my + 0.048f * u * open, 0.055f * u * open, 0.027f * u * open)
+            }
+            Mouth.SMILE, Mouth.CHOMP -> {
+                paint.style = Paint.Style.STROKE
+                paint.strokeWidth = 0.022f * u
+                paint.color = cBearDark
+                val r = 0.095f * u
+                c.drawArc(-r, my - 0.055f * u - r, r, my - 0.055f * u + r, 50.4f, 79.2f, false, paint)
+                paint.style = Paint.Style.FILL
+                if (mouth == Mouth.CHOMP) {       // puffed cheeks mid-nom
+                    paint.color = cBearMuzzle
+                    ell(c, -0.135f * u, hy + 0.10f * u, 0.048f * u, 0.042f * u)
+                    ell(c, 0.135f * u, hy + 0.10f * u, 0.048f * u, 0.042f * u)
+                }
+            }
+            Mouth.DIZZY -> {                       // wobbly little squiggle
+                paint.style = Paint.Style.STROKE
+                paint.strokeWidth = 0.014f * u
+                paint.color = cBearDark
+                val m = Path().apply {
+                    moveTo(-0.06f * u, my)
+                    quadTo(-0.03f * u, my - 0.02f * u, 0f, my)
+                    quadTo(0.03f * u, my + 0.02f * u, 0.06f * u, my)
+                }
+                c.drawPath(m, paint)
+                paint.style = Paint.Style.FILL
+            }
+        }
+
+        // ---- Eyes ----
+        val ey = hy - 0.045f * u
+        val browLift = if (mouth == Mouth.WIDE) 0.028f * u else 0f
+        paint.style = Paint.Style.STROKE
+        paint.strokeWidth = 0.022f * u
+        paint.color = furShade
+        c.drawLine(-0.155f * u, ey - 0.115f * u - browLift, -0.055f * u, ey - 0.135f * u - browLift, paint)
+        c.drawLine(0.055f * u, ey - 0.135f * u - browLift, 0.155f * u, ey - 0.115f * u - browLift, paint)
         if (dizzy) {
-            paint.style = Paint.Style.STROKE
-            paint.strokeWidth = u * 0.028f
+            paint.strokeWidth = 0.024f * u
             paint.color = Color.WHITE
-            c.drawCircle(cx - u * 0.105f, ey, u * 0.055f, paint)
-            c.drawCircle(cx + u * 0.105f, ey, u * 0.055f, paint)
-            c.drawArc(cx - u * 0.127f, ey - u * 0.022f, cx - u * 0.083f, ey + u * 0.022f, 0f, 260f, false, paint)
-            c.drawArc(cx + u * 0.083f, ey - u * 0.022f, cx + u * 0.127f, ey + u * 0.022f, 90f, 260f, false, paint)
+            c.drawCircle(-0.105f * u, ey, 0.05f * u, paint)
+            c.drawCircle(0.105f * u, ey, 0.05f * u, paint)
+            c.drawArc(-0.127f * u, ey - 0.022f * u, -0.083f * u, ey + 0.022f * u, 0f, 258f, false, paint)
+            c.drawArc(0.083f * u, ey - 0.022f * u, 0.127f * u, ey + 0.022f * u, 86f, 258f, false, paint)
+            paint.style = Paint.Style.FILL
+        } else if (blink) {
+            paint.strokeWidth = 0.016f * u
+            paint.color = cBearDark
+            c.drawArc(-0.155f * u, ey - 0.07f * u, -0.055f * u, ey + 0.03f * u, 45f, 90f, false, paint)
+            c.drawArc(0.055f * u, ey - 0.07f * u, 0.155f * u, ey + 0.03f * u, 45f, 90f, false, paint)
             paint.style = Paint.Style.FILL
         } else {
+            paint.style = Paint.Style.FILL
+            val lx = lookX * 0.015f * u
+            val ly = lookY * 0.013f * u
+            // Whites with a fine dark rim
             paint.color = Color.WHITE
-            ell(c, cx - u * 0.105f, ey, u * 0.052f, u * 0.062f)
-            ell(c, cx + u * 0.105f, ey, u * 0.052f, u * 0.062f)
-            paint.color = Color.parseColor("#2B1B0E")
-            ell(c, cx - u * 0.096f, ey + u * 0.012f, u * 0.028f, u * 0.032f)
-            ell(c, cx + u * 0.096f, ey + u * 0.012f, u * 0.028f, u * 0.032f)
+            ell(c, -0.105f * u, ey, 0.055f * u, 0.067f * u)
+            ell(c, 0.105f * u, ey, 0.055f * u, 0.067f * u)
+            paint.style = Paint.Style.STROKE
+            paint.strokeWidth = 0.008f * u
+            paint.color = furShade
+            c.drawOval(-0.16f * u, ey - 0.067f * u, -0.05f * u, ey + 0.067f * u, paint)
+            c.drawOval(0.05f * u, ey - 0.067f * u, 0.16f * u, ey + 0.067f * u, paint)
+            paint.style = Paint.Style.FILL
+            // Brown iris, pupil, double highlight — light source top-left
+            paint.color = Color.parseColor("#6B4423")
+            ell(c, -0.105f * u + lx, ey + 0.008f * u + ly, 0.034f * u, 0.036f * u)
+            ell(c, 0.105f * u + lx, ey + 0.008f * u + ly, 0.034f * u, 0.036f * u)
+            paint.color = Color.parseColor("#1C1008")
+            ell(c, -0.105f * u + lx, ey + 0.010f * u + ly, 0.019f * u, 0.021f * u)
+            ell(c, 0.105f * u + lx, ey + 0.010f * u + ly, 0.019f * u, 0.021f * u)
             paint.color = Color.WHITE
-            c.drawCircle(cx - u * 0.088f, ey, u * 0.010f, paint)
-            c.drawCircle(cx + u * 0.104f, ey, u * 0.010f, paint)
+            ell(c, -0.116f * u + lx, ey - 0.004f * u + ly, 0.011f * u, 0.011f * u)
+            ell(c, 0.094f * u + lx, ey - 0.004f * u + ly, 0.011f * u, 0.011f * u)
+            ell(c, -0.097f * u + lx, ey + 0.020f * u + ly, 0.005f * u, 0.005f * u)
+            ell(c, 0.113f * u + lx, ey + 0.020f * u + ly, 0.005f * u, 0.005f * u)
         }
+        paint.strokeCap = Paint.Cap.BUTT
+
+        c.restore()
     }
 
     private fun drawHud(c: Canvas, w: Float, h: Float) {
