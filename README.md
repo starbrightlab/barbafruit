@@ -40,17 +40,36 @@ The original HippoMuncher rules, for older players:
 
 ## 📦 Download & Install (Prebuilt APK)
 
+Every `v*` tag is built by GitHub Actions and published on the
+[**Releases**](../../releases/latest) page with three APKs:
+
+| APK | For |
+|-----|-----|
+| `…-arm64.apk` | Most Android devices (try this first) |
+| `…-arm32.apk` | Fallback if arm64 refuses to install |
+| `…-universal.apk` | Any device, biggest file |
+
+All releases are signed with the same (committed) keystore, so newer
+releases install straight over older ones — no uninstall needed.
+
+### Install straight from the Portal's browser (no ADB)
+
+1. Open the browser on the Portal and go to this repo's **Releases** page
+2. Tap the `…-arm64.apk` asset to download it (use `…-arm32.apk` if the
+   install later fails with an ABI error)
+3. Open the downloaded file from the browser's downloads list
+4. The first time, Android asks to allow installs from this source —
+   allow it, then confirm the install
+5. Launch **Barbafruit** from the launcher (Nova Launcher recommended on
+   Meta Portal)
+
+### Or install via ADB
+
 > **Requirements:** Android device with ADB enabled, or a Meta Portal with Developer Mode on.
 
-1. Download the latest APK from the [**Releases**](../../releases/latest) page
-2. Connect your device via USB
-3. Install via ADB:
-
 ```bash
-adb install -r Barbafruit.apk
+adb install -r Barbafruit-v2.0.0-arm64.apk
 ```
-
-4. Launch the app from your launcher (Nova Launcher recommended on Meta Portal)
 
 ---
 
@@ -91,11 +110,11 @@ Or let Android Studio generate it automatically when you open the project.
 
 ### Build a release APK
 
-The release build is configured to sign with the local debug keystore for easy sideloading. No Play Store keystore needed.
+The release build signs with the keystore committed at `keystore/barbafruit.keystore` (a debug-grade secret that only signs this game), so every build — local or CI — installs over any other. No Play Store keystore needed.
 
 ```bash
 ./gradlew assembleRelease -x lintVitalRelease
-# Output: app/build/outputs/apk/release/app-release.apk
+# Outputs: app/build/outputs/apk/release/app-{arm64-v8a,armeabi-v7a,universal}-release.apk
 ```
 
 > The `-x lintVitalRelease` flag skips a Play Store lint check that flags `targetSdk 28` — intentional for Meta Portal compatibility.

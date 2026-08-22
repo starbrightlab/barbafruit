@@ -16,11 +16,15 @@ android {
     }
 
     signingConfigs {
+        // A keystore committed to the repo (debug-grade secret, it only signs
+        // this family game): every build anywhere — local or CI — carries the
+        // same signature, so release updates install over each other without
+        // an uninstall.
         debug {
-            storeFile file("${System.getProperty('user.home')}/.android/debug.keystore")
-            storePassword 'android'
-            keyAlias 'androiddebugkey'
-            keyPassword 'android'
+            storeFile file("${rootDir}/keystore/barbafruit.keystore")
+            storePassword 'barbafruit'
+            keyAlias 'barbafruit'
+            keyPassword 'barbafruit'
         }
     }
 
