@@ -181,7 +181,13 @@ class GameSurfaceView @JvmOverloads constructor(
     private val cBearDark = Color.parseColor("#4A2E17")
     private val cTongue = Color.parseColor("#E8837E")
     private val cCream = Color.parseColor("#F5E9C8")
-    private val cTrunkBand = Color.parseColor("#C99B66")
+    private val cTrunkYellow = Color.parseColor("#E2E39B")
+    private val cTrunkTick = Color.parseColor("#43432F")
+    private val cTreePurple = Color.parseColor("#B98CD9")
+    private val cTreeRed = Color.parseColor("#F06A6A")
+    private val cBushPink = Color.parseColor("#E86A8A")
+    private val cMoundLight = Color.parseColor("#58B54C")
+    private val cMoundDark = Color.parseColor("#3F9440")
     private val cLoraxOrange = Color.parseColor("#F28C28")
     private val cLoraxFace = Color.parseColor("#FFC98B")
     private val cMustache = Color.parseColor("#FFD34D")
@@ -195,10 +201,6 @@ class GameSurfaceView @JvmOverloads constructor(
     // The static scenery (hills, grass, truffula grove) is expensive to
     // re-draw every frame, so it's baked into a bitmap per surface size.
     private var sceneryBitmap: Bitmap? = null
-    private val trunkPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-        style = Paint.Style.STROKE
-        strokeCap = Paint.Cap.ROUND
-    }
 
     /** Multiply a color's RGB channels by [f] (f < 1 darkens). */
     private fun shade(color: Int, f: Float): Int = Color.argb(
@@ -207,6 +209,9 @@ class GameSurfaceView @JvmOverloads constructor(
         (Color.green(color) * f).toInt().coerceIn(0, 255),
         (Color.blue(color) * f).toInt().coerceIn(0, 255)
     )
+
+    private fun withAlpha(color: Int, alpha: Int): Int =
+        Color.argb(alpha, Color.red(color), Color.green(color), Color.blue(color))
 
     /** Mix a color toward white by [f] (0..1). */
     private fun lighten(color: Int, f: Float): Int = Color.argb(
@@ -585,72 +590,177 @@ class GameSurfaceView @JvmOverloads constructor(
         for (i in 0 until 9) {
             c.drawCircle((i / 8f) * w, h * 0.955f, h * 0.025f, paint)
         }
-        // Two short, dimmed trees on the far hill for depth…
-        drawTree(c, w, h, w * 0.46f, h * 0.74f, h * 0.048f, w * 0.006f, cOrange, dim = true)
-        drawTree(c, w, h, w * 0.585f, h * 0.77f, h * 0.042f, -w * 0.005f, cPink, dim = true)
-        // …and four foreground trees framing the play space, positioned to
-        // leave the top-center (score/timer) and HUD rows clear.
-        drawTree(c, w, h, w * 0.06f, h * 0.15f, h * 0.082f, w * 0.012f, cPink, dim = false)
-        drawTree(c, w, h, w * 0.21f, h * 0.30f, h * 0.062f, -w * 0.012f, cYellow, dim = false)
-        drawTree(c, w, h, w * 0.79f, h * 0.28f, h * 0.062f, w * 0.012f, cOrange, dim = false)
-        drawTree(c, w, h, w * 0.94f, h * 0.14f, h * 0.082f, -w * 0.012f, cPink, dim = false)
+        // Background trees and ground bushes for depth…
+        drawTree(c, w, h, w * 0.46f, h * 0.74f, h * 0.048f, w * 0.006f, cBushPink, dim = true)
+        drawTree(c, w, h, w * 0.585f, h * 0.77f, h * 0.042f, -w * 0.005f, cYellow, dim = true)
+        drawTuft(c, w * 0.31f, h * 0.912f, h * 0.034f, cBushPink)
+        drawTuft(c, w * 0.69f, h * 0.916f, h * 0.030f, cYellow)
+        // …and four foreground trees in the classic tuft colors, framing
+        // the play space and leaving the top-center HUD clear.
+        drawTree(c, w, h, w * 0.06f, h * 0.15f, h * 0.082f, w * 0.020f, cOrange, dim = false)
+        drawTree(c, w, h, w * 0.21f, h * 0.30f, h * 0.062f, -w * 0.016f, cYellow, dim = false)
+        drawTree(c, w, h, w * 0.79f, h * 0.28f, h * 0.062f, w * 0.016f, cTreePurple, dim = false)
+        drawTree(c, w, h, w * 0.94f, h * 0.14f, h * 0.082f, -w * 0.020f, cTreeRed, dim = false)
     }
 
-    /** One truffula tree: S-curved trunk with ring stripes, tuft on top. */
+    /**
+     * One truffula tree, after the book: a tapered S-curved trunk with
+     * diagonal candy stripes, a spiky grass mound at the base, and a
+     * wind-swirled tuft on top.
+     */
     private fun drawTree(
         c: Canvas, w: Float, h: Float,
         baseX: Float, tuftY: Float, r: Float, lean: Float, color: Int, dim: Boolean
     ) {
-        val baseY = h * 0.965f
+        val baseY = h * 0.975f
         val topX = baseX + lean
-        val topY = tuftY + r * 0.55f
-        val thick = r * 0.24f
+        val topY = tuftY + r * 0.60f
+        val len = baseY - topY
+        val dimF = if (dim) 0.72f else 1f
 
+        // Cubic center curve (S-bend), sampled into a tapered polygon.
+        val p1x = baseX - lean * 1.5f; val p1y = baseY - len * 0.33f
+        val p2x = topX + lean * 1.9f; val p2y = topY + len * 0.30f
+        fun bezX(t: Float): Float { val q = 1 - t; return q * q * q * baseX + 3 * q * q * t * p1x + 3 * q * t * t * p2x + t * t * t * topX }
+        fun bezY(t: Float): Float { val q = 1 - t; return q * q * q * baseY + 3 * q * q * t * p1y + 3 * q * t * t * p2y + t * t * t * topY }
+        fun tanX(t: Float): Float { val q = 1 - t; return 3 * q * q * (p1x - baseX) + 6 * q * t * (p2x - p1x) + 3 * t * t * (topX - p2x) }
+        fun tanY(t: Float): Float { val q = 1 - t; return 3 * q * q * (p1y - baseY) + 6 * q * t * (p2y - p1y) + 3 * t * t * (topY - p2y) }
+
+        val np = 14
+        val lx = FloatArray(np + 1); val ly = FloatArray(np + 1)
+        val rx = FloatArray(np + 1); val ry = FloatArray(np + 1)
+        for (i in 0..np) {
+            val t = i / np.toFloat()
+            val x = bezX(t); val y = bezY(t)
+            val dx = tanX(t); val dy = tanY(t)
+            val dl = kotlin.math.sqrt(dx * dx + dy * dy).coerceAtLeast(1e-3f)
+            val nx = -dy / dl; val ny = dx / dl
+            val wd = r * (0.34f - 0.20f * Math.pow(t.toDouble(), 0.9).toFloat()) / 2f
+            lx[i] = x + nx * wd; ly[i] = y + ny * wd
+            rx[i] = x - nx * wd; ry[i] = y - ny * wd
+        }
         val trunk = Path().apply {
-            moveTo(baseX, baseY)
-            cubicTo(
-                baseX - lean * 0.8f, baseY - (baseY - topY) * 0.38f,
-                topX + lean * 1.1f, topY + (baseY - topY) * 0.34f,
-                topX, topY
+            moveTo(lx[0], ly[0])
+            for (i in 1..np) lineTo(lx[i], ly[i])
+            for (i in np downTo 0) lineTo(rx[i], ry[i])
+            close()
+        }
+        paint.style = Paint.Style.FILL
+        paint.color = shade(cTrunkYellow, dimF)   // pale yellow-green, per the book
+        c.drawPath(trunk, paint)
+
+        // Tiger ticks: short dark dashes in from alternating edges.
+        c.save()
+        c.clipPath(trunk)
+        paint.style = Paint.Style.STROKE
+        paint.strokeCap = Paint.Cap.ROUND
+        paint.color = shade(cTrunkTick, dimF)
+        paint.strokeWidth = r * 0.045f
+        val m = ((len / (r * 0.22f)) + 0.5f).toInt().coerceAtLeast(8)
+        for (j in 1 until m) {
+            val t = j / m.toFloat() + (((j * 13) % 7) / 7f - 0.5f) * (0.4f / m)
+            val x = bezX(t); val y = bezY(t)
+            val dx = tanX(t); val dy = tanY(t)
+            val dl = kotlin.math.sqrt(dx * dx + dy * dy).coerceAtLeast(1e-3f)
+            val nx = -dy / dl; val ny = dx / dl
+            val wd = r * (0.34f - 0.20f * Math.pow(t.toDouble(), 0.9).toFloat()) / 2f
+            val side = if (j % 2 == 1) 1f else -1f
+            val ex = x + nx * wd * side
+            val eyy = y + ny * wd * side
+            c.drawLine(
+                ex, eyy,
+                ex - nx * wd * 1.1f * side + dx / dl * wd * 0.5f,
+                eyy - ny * wd * 1.1f * side + dy / dl * wd * 0.5f,
+                paint
             )
         }
-        trunkPaint.pathEffect = null
-        trunkPaint.color = if (dim) shade(cCream, 0.72f) else cCream
-        trunkPaint.strokeWidth = thick
-        c.drawPath(trunk, trunkPaint)
-        // Ring stripes: a dashed re-stroke follows the same curve.
-        trunkPaint.pathEffect = DashPathEffect(floatArrayOf(thick * 0.55f, thick * 1.35f), thick)
-        trunkPaint.color = if (dim) shade(cTrunkBand, 0.72f) else cTrunkBand
-        trunkPaint.strokeWidth = thick * 0.78f
-        c.drawPath(trunk, trunkPaint)
-        trunkPaint.pathEffect = null
+        paint.strokeCap = Paint.Cap.BUTT
+        paint.style = Paint.Style.FILL
+        c.restore()
 
+        drawMound(c, baseX, h * 0.965f, r * 0.85f, dimF)
         drawTuft(c, topX, tuftY, r, if (dim) shade(color, 0.72f) else color)
     }
 
-    /** A fluffy tuft: shadow ball, ring of puffs, bright core, highlight. */
-    private fun drawTuft(c: Canvas, cx: Float, cy: Float, r: Float, color: Int) {
+    /** Soft blobby green mound at a trunk base, after the book. */
+    private fun drawMound(c: Canvas, x: Float, y: Float, r: Float, dimF: Float) {
+        val g = shade(cMoundLight, dimF)
+        val gd = shade(cMoundDark, dimF)
         paint.style = Paint.Style.FILL
-        paint.color = shade(color, 0.72f)
-        c.drawCircle(cx + r * 0.05f, cy + r * 0.15f, r * 0.90f, paint)
-        paint.color = color
-        for (i in 0 until 7) {
-            val a = i / 7f * (2 * Math.PI).toFloat() + 0.35f
-            val pr = r * (0.42f + 0.09f * ((i * 5) % 3))
-            c.drawCircle(
-                cx + kotlin.math.cos(a) * r * 0.55f,
-                cy + sin(a) * r * 0.50f, pr, paint
-            )
-        }
-        c.drawCircle(cx, cy, r * 0.80f, paint)
-        paint.color = lighten(color, 0.28f)
-        c.drawCircle(cx - r * 0.26f, cy - r * 0.30f, r * 0.42f, paint)
-        paint.color = withAlpha(Color.WHITE, 77)
-        c.drawCircle(cx - r * 0.38f, cy - r * 0.44f, r * 0.18f, paint)
+        paint.color = gd
+        ell(c, x, y - r * 0.02f, r * 0.62f, r * 0.20f)
+        paint.color = g
+        ell(c, x - r * 0.34f, y - r * 0.10f, r * 0.28f, r * 0.16f)
+        ell(c, x + r * 0.02f, y - r * 0.16f, r * 0.30f, r * 0.185f)
+        ell(c, x + r * 0.36f, y - r * 0.09f, r * 0.26f, r * 0.15f)
     }
 
-    private fun withAlpha(color: Int, alpha: Int): Int =
-        Color.argb(alpha, Color.red(color), Color.green(color), Color.blue(color))
+    /**
+     * A truffula tuft, after the book: a pinwheel of long curved locks
+     * radiating from the center — the strand texture crosses the whole
+     * tuft, every lock swept in one rotational direction. Four overlapping
+     * lock layers over a base disc, with a tight swirl knot in the middle.
+     */
+    private fun drawTuft(c: Canvas, cx: Float, cy: Float, r: Float, color: Int) {
+        val twoPi = (2 * Math.PI).toFloat()
+        val phase = (cx * 0.011f + cy * 0.017f) % twoPi
+
+        // Each lock is a comma: it leaves the center radially, then bends
+        // hard sideways so the tip points almost tangentially.
+        fun lockLayer(n: Int, colr: Int, rBase: Float, rVar: Float, sweepBase: Float, ph: Float) {
+            paint.color = colr
+            for (i in 0 until n) {
+                val v = ((i * 7) % 5) / 4f
+                val a = i / n.toFloat() * twoPi + phase + ph
+                val sweep = sweepBase + 0.30f * v
+                val rt = r * (rBase + rVar * v)
+                val bh = Math.PI.toFloat() / n * 2.2f     // fat, heavily overlapping bases
+                val tipA = a + sweep
+                val lock = Path().apply {
+                    moveTo(cx + kotlin.math.cos(a - bh) * r * 0.12f, cy + sin(a - bh) * r * 0.12f)
+                    // Outer edge: out radially, then the elbow bends it around.
+                    cubicTo(
+                        cx + kotlin.math.cos(a - bh * 0.2f) * rt * 0.45f, cy + sin(a - bh * 0.2f) * rt * 0.45f,
+                        cx + kotlin.math.cos(a + sweep * 0.45f) * rt * 0.92f, cy + sin(a + sweep * 0.45f) * rt * 0.92f,
+                        cx + kotlin.math.cos(tipA) * rt, cy + sin(tipA) * rt
+                    )
+                    // Inner edge hugs the inside of the arc back to the base.
+                    cubicTo(
+                        cx + kotlin.math.cos(a + sweep * 0.55f) * rt * 0.60f, cy + sin(a + sweep * 0.55f) * rt * 0.60f,
+                        cx + kotlin.math.cos(a + bh * 0.4f) * rt * 0.30f, cy + sin(a + bh * 0.4f) * rt * 0.30f,
+                        cx + kotlin.math.cos(a + bh) * r * 0.12f, cy + sin(a + bh) * r * 0.12f
+                    )
+                    close()
+                }
+                c.drawPath(lock, paint)
+            }
+        }
+
+        paint.style = Paint.Style.FILL
+        // Base disc so no sky shows through the lock gaps
+        paint.color = shade(color, 0.80f)
+        c.drawCircle(cx, cy, r * 0.68f, paint)
+        lockLayer(13, shade(color, 0.90f), 1.08f, 0.24f, 1.15f, 0f)       // deep, longest locks
+        lockLayer(15, shade(color, 0.96f), 0.94f, 0.22f, 1.05f, 0.15f)    // bulk layer
+        lockLayer(16, color, 0.86f, 0.24f, 0.95f, 0.30f)                  // main body locks
+        lockLayer(8, lighten(color, 0.15f), 0.58f, 0.20f, 0.85f, 0.55f)   // inner light locks
+        // Tight swirl knot at the center
+        paint.style = Paint.Style.STROKE
+        paint.strokeCap = Paint.Cap.ROUND
+        paint.color = shade(color, 0.65f)
+        paint.strokeWidth = r * 0.05f
+        val knot = Path()
+        for (k in 0..10) {
+            val th = k / 10f * 1.4f * twoPi + phase
+            val rad = r * (0.03f + 0.12f * k / 10f)
+            val px = cx + kotlin.math.cos(th) * rad
+            val py = cy + sin(th) * rad
+            if (k == 0) knot.moveTo(px, py) else knot.lineTo(px, py)
+        }
+        c.drawPath(knot, paint)
+        paint.strokeCap = Paint.Cap.BUTT
+        paint.style = Paint.Style.FILL
+    }
 
     // ---------------- Calibration screen ----------------
     private fun drawCalibration(c: Canvas, w: Float, h: Float) {
