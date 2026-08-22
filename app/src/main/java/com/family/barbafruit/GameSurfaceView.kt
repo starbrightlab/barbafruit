@@ -860,18 +860,90 @@ class GameSurfaceView @JvmOverloads constructor(
             paint.color = withAlpha(Color.WHITE, 90)
             c.drawCircle(x - r * 0.38f + bob, y - r * 0.48f, r * 0.15f, paint)
         } else when (item.kind) {
-            0 -> { // rock
-                paint.color = Color.GRAY
-                c.drawCircle(x, y, r * 0.9f, paint)
-                paint.color = Color.DKGRAY
-                c.drawCircle(x - r * 0.3f, y - r * 0.2f, r * 0.35f, paint)
-            }
-            else -> { // muddy boot
-                paint.color = Color.parseColor("#6B4A2B")
-                c.drawRect(x - r * .5f, y - r, x + r * .2f, y + r * .5f, paint)
-                c.drawRect(x - r * .5f, y + r * .2f, x + r, y + r, paint)
-            }
+            // Bad items tumble as they fall: the rock rolls, the boot swings.
+            0 -> drawRock(c, x, y, r, Math.toDegrees((item.sway + item.y * 5f).toDouble()).toFloat())
+            else -> drawBoot(c, x, y, r, sin(item.sway * 3f + item.y * 6f) * 17.2f)
         }
+    }
+
+    /** A faceted cartoon boulder: shadow mass, lit facet, crack, speckles. */
+    private fun drawRock(c: Canvas, x: Float, y: Float, r: Float, rotDeg: Float) {
+        c.save()
+        c.translate(x, y)
+        c.rotate(rotDeg)
+        val px = floatArrayOf(0f, 0.62f, 0.95f, 0.72f, 0.15f, -0.5f, -0.9f, -0.68f)
+        val py = floatArrayOf(-0.92f, -0.62f, -0.05f, 0.55f, 0.85f, 0.72f, 0.2f, -0.55f)
+        fun poly(sc: Float, ox: Float, oy: Float) {
+            val path = Path()
+            for (i in px.indices) {
+                val vx = px[i] * r * sc + ox
+                val vy = py[i] * r * sc + oy
+                if (i == 0) path.moveTo(vx, vy) else path.lineTo(vx, vy)
+            }
+            path.close()
+            c.drawPath(path, paint)
+        }
+        paint.style = Paint.Style.FILL
+        paint.color = Color.parseColor("#6E6E78"); poly(1f, 0.05f * r, 0.06f * r)
+        paint.color = Color.parseColor("#90909A"); poly(0.96f, -0.02f * r, -0.03f * r)
+        // Top-left facet catching the light
+        paint.color = Color.parseColor("#ABABB5")
+        val facet = Path().apply {
+            moveTo(-0.6f * r, -0.5f * r); lineTo(-0.05f * r, -0.85f * r)
+            lineTo(0.3f * r, -0.5f * r); lineTo(-0.15f * r, -0.2f * r); close()
+        }
+        c.drawPath(facet, paint)
+        // Crack and speckles
+        paint.style = Paint.Style.STROKE
+        paint.strokeWidth = r * 0.06f
+        paint.strokeCap = Paint.Cap.ROUND
+        paint.color = Color.parseColor("#5C5C66")
+        val crack = Path().apply {
+            moveTo(0.15f * r, 0.1f * r); lineTo(0.35f * r, 0.35f * r); lineTo(0.25f * r, 0.6f * r)
+        }
+        c.drawPath(crack, paint)
+        paint.strokeCap = Paint.Cap.BUTT
+        paint.style = Paint.Style.FILL
+        c.drawCircle(-0.35f * r, 0.3f * r, r * 0.06f, paint)
+        c.drawCircle(0.5f * r, -0.25f * r, r * 0.05f, paint)
+        c.restore()
+    }
+
+    /** A worn old boot: sole, heel, toe cap, ankle shaft, patch, floppy cuff. */
+    private fun drawBoot(c: Canvas, x: Float, y: Float, r: Float, rotDeg: Float) {
+        c.save()
+        c.translate(x, y)
+        c.rotate(rotDeg)
+        paint.style = Paint.Style.FILL
+        // Sole and heel
+        paint.color = Color.parseColor("#4A3220")
+        c.drawRoundRect(-0.72f * r, 0.48f * r, 0.88f * r, 0.74f * r, 0.10f * r, 0.10f * r, paint)
+        c.drawRoundRect(-0.72f * r, 0.68f * r, -0.30f * r, 0.92f * r, 0.08f * r, 0.08f * r, paint)
+        // Foot with lighter toe cap
+        paint.color = Color.parseColor("#7A4E2A")
+        c.drawRoundRect(-0.62f * r, 0.02f * r, 0.80f * r, 0.54f * r, 0.24f * r, 0.24f * r, paint)
+        paint.color = Color.parseColor("#8F5E36")
+        ell(c, 0.52f * r, 0.28f * r, 0.30f * r, 0.26f * r)
+        // Ankle shaft
+        paint.color = Color.parseColor("#7A4E2A")
+        c.drawRoundRect(-0.62f * r, -0.92f * r, 0.04f * r, 0.13f * r, 0.12f * r, 0.12f * r, paint)
+        // Stitched patch
+        paint.color = Color.parseColor("#A9805A")
+        c.drawRoundRect(-0.50f * r, -0.45f * r, -0.16f * r, -0.15f * r, 0.06f * r, 0.06f * r, paint)
+        paint.style = Paint.Style.STROKE
+        paint.strokeWidth = r * 0.035f
+        paint.strokeCap = Paint.Cap.ROUND
+        paint.color = Color.parseColor("#3A2617")
+        c.drawLine(-0.47f * r, -0.47f * r, -0.41f * r, -0.41f * r, paint)
+        c.drawLine(-0.22f * r, -0.20f * r, -0.16f * r, -0.14f * r, paint)
+        paint.strokeCap = Paint.Cap.BUTT
+        paint.style = Paint.Style.FILL
+        // Floppy cuff with dark opening
+        paint.color = Color.parseColor("#8F5E36")
+        ell(c, -0.29f * r, -0.92f * r, 0.40f * r, 0.15f * r)
+        paint.color = Color.parseColor("#3A2617")
+        ell(c, -0.29f * r, -0.94f * r, 0.32f * r, 0.10f * r)
+        c.restore()
     }
 
     private enum class Mouth { OPEN, WIDE, SMILE, CHOMP, DIZZY }
