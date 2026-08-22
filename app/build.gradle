@@ -31,6 +31,17 @@ android {
         }
     }
 
+    // Per-ABI APKs alongside the universal one: the Portal (Snapdragon 625)
+    // only needs ARM, and the slim APKs are far easier to shuttle around.
+    splits {
+        abi {
+            enable true
+            reset()
+            include 'armeabi-v7a', 'arm64-v8a'
+            universalApk true
+        }
+    }
+
     compileOptions {
         sourceCompatibility JavaVersion.VERSION_17
         targetCompatibility JavaVersion.VERSION_17
